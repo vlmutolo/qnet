@@ -139,18 +139,23 @@ def _compute_active_virtual_service_rates(
 
 
 @njit(cache=True)
-def _compute_active_virtual_swap_rates(
+def _compute_active_virtual_swap_choices(
     alpha: IntMatrix,
     swap_i: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
     swap_rates: Array1D,
-    out: Array1D,
-) -> float:
+    best_weight: IntArray1D,
+    best_idx: IntArray1D,
+    choice_idx_out: IntArray1D,
+    choice_rate_out: Array1D,
+) -> tuple[float, int]:
     total = 0.0
     n_nodes = swap_rates.shape[0]
-    best_weight = np.zeros(n_nodes, dtype=np.int64)
-    best_idx = np.full(n_nodes, -1, dtype=np.int64)
+
+    for i in range(n_nodes):
+        best_weight[i] = 0
+        best_idx[i] = -1
 
     for idx in range(swap_i.shape[0]):
         i = swap_i[idx]
@@ -161,15 +166,16 @@ def _compute_active_virtual_swap_rates(
             best_weight[i] = weight
             best_idx[i] = idx
 
-    for idx in range(out.shape[0]):
-        out[idx] = 0.0
-
+    active_count = 0
     for i in range(n_nodes):
         idx = best_idx[i]
         if idx >= 0:
-            out[idx] = swap_rates[i]
-            total += swap_rates[i]
-    return total
+            rate = swap_rates[i]
+            choice_idx_out[active_count] = idx
+            choice_rate_out[active_count] = rate
+            total += rate
+            active_count += 1
+    return total, active_count
 
 
 @njit(cache=True)
@@ -194,19 +200,24 @@ def _compute_active_physical_service_rates(
 
 
 @njit(cache=True)
-def _compute_active_physical_swap_rates(
+def _compute_active_physical_swap_choices(
     q: IntMatrix,
     h_mu: IntArray1D,
     swap_i: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
     swap_rates: Array1D,
-    out: Array1D,
-) -> float:
+    best_deficit: IntArray1D,
+    best_idx: IntArray1D,
+    choice_idx_out: IntArray1D,
+    choice_rate_out: Array1D,
+) -> tuple[float, int]:
     total = 0.0
     n_nodes = swap_rates.shape[0]
-    best_deficit = np.zeros(n_nodes, dtype=np.int64)
-    best_idx = np.full(n_nodes, -1, dtype=np.int64)
+
+    for i in range(n_nodes):
+        best_deficit[i] = 0
+        best_idx[i] = -1
 
     for idx in range(swap_i.shape[0]):
         if h_mu[idx] <= 0:
@@ -221,15 +232,16 @@ def _compute_active_physical_swap_rates(
             best_deficit[i] = deficit
             best_idx[i] = idx
 
-    for idx in range(out.shape[0]):
-        out[idx] = 0.0
-
+    active_count = 0
     for i in range(n_nodes):
         idx = best_idx[i]
         if idx >= 0:
-            out[idx] = swap_rates[i]
-            total += swap_rates[i]
-    return total
+            rate = swap_rates[i]
+            choice_idx_out[active_count] = idx
+            choice_rate_out[active_count] = rate
+            total += rate
+            active_count += 1
+    return total, active_count
 
 
 @njit(cache=True)
@@ -419,9 +431,16 @@ class GillespieQBPEventProducer:
         self.demand_total = float(self.demand_pair_rates.sum())
         self.generation_total = float(self.generation_pair_rates.sum())
         self.active_virtual_service_rates = np.zeros_like(self.service_pair_rates)
-        self.active_virtual_swap_rates = np.zeros(swap_i.shape[0], dtype=np.float64)
         self.active_physical_service_rates = np.zeros_like(self.service_pair_rates)
-        self.active_physical_swap_rates = np.zeros(swap_i.shape[0], dtype=np.float64)
+        n_nodes = config.swap_rates.shape[0]
+        self.virtual_swap_best_weight = np.zeros(n_nodes, dtype=np.int64)
+        self.virtual_swap_best_idx = np.full(n_nodes, -1, dtype=np.int64)
+        self.active_virtual_swap_choice_idx = np.empty(n_nodes, dtype=np.int64)
+        self.active_virtual_swap_choice_rates = np.zeros(n_nodes, dtype=np.float64)
+        self.physical_swap_best_deficit = np.zeros(n_nodes, dtype=np.int64)
+        self.physical_swap_best_idx = np.full(n_nodes, -1, dtype=np.int64)
+        self.active_physical_swap_choice_idx = np.empty(n_nodes, dtype=np.int64)
+        self.active_physical_swap_choice_rates = np.zeros(n_nodes, dtype=np.float64)
         self.rng = np.random.default_rng(seed)
 
     def produce(self, state: QBPState, until_time: float | None = None) -> tuple[QBPEvent | None, bool]:
@@ -433,13 +452,16 @@ class GillespieQBPEventProducer:
             self.service_pair_rates,
             self.active_virtual_service_rates,
         )
-        virtual_swap_total = _compute_active_virtual_swap_rates(
+        virtual_swap_total, virtual_swap_count = _compute_active_virtual_swap_choices(
             state.alpha,
             self.swap_i,
             self.swap_y,
             self.swap_z,
             self.config.swap_rates,
-            self.active_virtual_swap_rates,
+            self.virtual_swap_best_weight,
+            self.virtual_swap_best_idx,
+            self.active_virtual_swap_choice_idx,
+            self.active_virtual_swap_choice_rates,
         )
         physical_service_total = _compute_active_physical_service_rates(
             state.q,
@@ -449,14 +471,17 @@ class GillespieQBPEventProducer:
             self.service_pair_rates,
             self.active_physical_service_rates,
         )
-        physical_swap_total = _compute_active_physical_swap_rates(
+        physical_swap_total, physical_swap_count = _compute_active_physical_swap_choices(
             state.q,
             state.h_mu,
             self.swap_i,
             self.swap_y,
             self.swap_z,
             self.config.swap_rates,
-            self.active_physical_swap_rates,
+            self.physical_swap_best_deficit,
+            self.physical_swap_best_idx,
+            self.active_physical_swap_choice_idx,
+            self.active_physical_swap_choice_rates,
         )
 
         demand_total = self.demand_total
@@ -532,7 +557,12 @@ class GillespieQBPEventProducer:
 
         selector -= virtual_service_total
         if selector < virtual_swap_total:
-            idx = _sample_index(self.rng, self.active_virtual_swap_rates, virtual_swap_total)
+            compact_idx = _sample_index(
+                self.rng,
+                self.active_virtual_swap_choice_rates[:virtual_swap_count],
+                virtual_swap_total,
+            )
+            idx = int(self.active_virtual_swap_choice_idx[compact_idx])
             return (
                 QBPEvent(
                     event_index=event_index,
@@ -540,7 +570,7 @@ class GillespieQBPEventProducer:
                     dt=dt,
                     total_rate=total_rate,
                     event_type="virtual_swap",
-                    event_rate=float(self.active_virtual_swap_rates[idx]),
+                    event_rate=float(self.active_virtual_swap_choice_rates[compact_idx]),
                     swap_idx=int(idx),
                     i=int(self.swap_i[idx]),
                     y=int(self.swap_y[idx]),
@@ -566,7 +596,12 @@ class GillespieQBPEventProducer:
                 False,
             )
 
-        idx = _sample_index(self.rng, self.active_physical_swap_rates, physical_swap_total)
+        compact_idx = _sample_index(
+            self.rng,
+            self.active_physical_swap_choice_rates[:physical_swap_count],
+            physical_swap_total,
+        )
+        idx = int(self.active_physical_swap_choice_idx[compact_idx])
         return (
             QBPEvent(
                 event_index=event_index,
@@ -574,7 +609,7 @@ class GillespieQBPEventProducer:
                 dt=dt,
                 total_rate=total_rate,
                 event_type="physical_swap",
-                event_rate=float(self.active_physical_swap_rates[idx]),
+                event_rate=float(self.active_physical_swap_choice_rates[compact_idx]),
                 swap_idx=int(idx),
                 i=int(self.swap_i[idx]),
                 y=int(self.swap_y[idx]),
@@ -994,14 +1029,19 @@ def _upper_triangle_sum(matrix: IntMatrix) -> int:
     return int(np.triu(matrix, k=1).sum())
 
 
-def _sample_index(rng: np.random.Generator, rates: Array1D, total_rate: float) -> int:
-    threshold = float(rng.random() * total_rate)
+@njit(cache=True)
+def _sample_index_from_threshold(rates: Array1D, threshold: float) -> int:
     cumulative = 0.0
     for idx, rate in enumerate(rates):
         cumulative += float(rate)
         if threshold <= cumulative:
             return idx
     return len(rates) - 1
+
+
+def _sample_index(rng: np.random.Generator, rates: Array1D, total_rate: float) -> int:
+    threshold = float(rng.random() * total_rate)
+    return _sample_index_from_threshold(rates, threshold)
 
 
 def _require(value: int | None, name: str) -> int:
