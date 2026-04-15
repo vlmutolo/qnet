@@ -237,6 +237,40 @@ def test_linear_module_emits_shared_simulation_config_json(tmp_path) -> None:
     assert loaded.swap_rates == [1.5, 1.5]
 
 
+def test_linear_module_enforces_per_node_swap_caps() -> None:
+    linear_path = Path(__file__).resolve().parents[1] / "linear.py"
+    spec = importlib.util.spec_from_file_location("linear_module_under_test_caps", linear_path)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    generation_graph = module.create_chain_adjacency_matrix(3, edge_weight=1.0)
+    consumption_graph = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    infeasible = module.LinearSpec(3)
+    infeasible.add_generate_constraints(generation_graph)
+    infeasible.add_consume_constraints(consumption_graph)
+    infeasible.add_swap_capacity_constraints([0.0, 0.0, 0.0])
+    infeasible_result = infeasible.solve()
+    assert infeasible_result.status != 0
+
+    feasible = module.LinearSpec(3)
+    feasible.add_generate_constraints(generation_graph)
+    feasible.add_consume_constraints(consumption_graph)
+    feasible.add_swap_capacity_constraints([0.0, 1.0, 0.0])
+    feasible_result = feasible.solve()
+    assert feasible_result.status == 0
+    assert feasible.total_swap_undirected(feasible_result) > 0.0
+
+
 def test_lp_cycle_bp_service_ratio_converges_near_one(tmp_path) -> None:
     linear_path = Path(__file__).resolve().parents[1] / "linear.py"
     spec = importlib.util.spec_from_file_location("linear_module_under_test_cycle", linear_path)

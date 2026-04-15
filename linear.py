@@ -181,8 +181,14 @@ class LinearSpec:
             A_eq = None
             b_eq = None
 
-        # Inequalities remain optional and are left as-is if provided elsewhere
-        a_ub = np.array(self.a_ub) if self.a_ub else None
+        # Build inequality matrix from accumulated rows.
+        if self.a_ub:
+            if any(sp.issparse(row) for row in self.a_ub):
+                a_ub = sp.vstack(self.a_ub)
+            else:
+                a_ub = np.array(self.a_ub)
+        else:
+            a_ub = None
         b_ub = np.array(self.b_ub) if self.b_ub else None
 
         bounds = list(zip(self.lb, self.ub))
@@ -214,6 +220,24 @@ class LinearSpec:
                 lhs = self._var_consume((i, j))
                 rhs = consume_adj_matrix[i, j]
                 self._add_eq_constraint(lhs, rhs)
+
+    def add_swap_capacity_constraints(self, swap_caps: list[float] | NDArray[np.float64]):
+        swap_caps = np.asarray(swap_caps, dtype=float)
+        if swap_caps.shape != (self.num_nodes,):
+            raise ValueError("swap_caps must contain one cap per node.")
+        if np.any(swap_caps < 0.0):
+            raise ValueError("swap_caps must be non-negative.")
+
+        for k in range(self.num_nodes):
+            lhs = sp.coo_matrix((1, self._offsets.total_num_vars))
+            for i in range(self.num_nodes):
+                if i == k:
+                    continue
+                for j in range(i + 1, self.num_nodes):
+                    if j == k:
+                        continue
+                    lhs = lhs + self._var_swap((k, i, j))
+            self._add_ub_constraint(lhs, float(swap_caps[k]))
 
     def cost_min_sum_generate(self) -> NDArray[np.float64]:
         a = np.zeros(self._offsets.total_num_vars)
@@ -1292,7 +1316,7 @@ def single_run_topology(
     cons_max_edge_weight: float = 7.0,
     seed: int | None = None,
     objective: str = "min_sum_generate",
-    swap_rate: float = 1.0,
+    swap_rate: float = 10.0,
     json_output_path: str | None = None,
     simulation_config_output_path: str | None = None,
     json_pretty: bool = True,
@@ -1345,6 +1369,7 @@ def single_run_topology(
     spec = LinearSpec(num_nodes)
     spec.add_generate_constraints(generation_graph)
     spec.add_consume_constraints(consumption_graph)
+    spec.add_swap_capacity_constraints(np.full(num_nodes, float(swap_rate), dtype=float))
     result = spec.solve(objective=objective)
     print(f"\n{topology.capitalize()} optimization status: {result.message}")
     print(f"Optimization status code: {result.status}")
@@ -1526,7 +1551,7 @@ def single_run_cycle(
     cons_max_edge_weight: float = 7.0,
     seed: int | None = None,
     objective: str = "min_sum_generate",
-    swap_rate: float = 1.0,
+    swap_rate: float = 10.0,
     json_output_path: str | None = "./output/lp/single_run_cycle_solution.json",
     simulation_config_output_path: str | None = None,
     json_pretty: bool = True,
@@ -1561,7 +1586,7 @@ def write_requested_lp_results(
     cons_edge_fraction: float = 0.2,
     cons_max_edge_weight: float = 7.0,
     objective: str = "min_sum_generate",
-    swap_rate: float = 1.0,
+    swap_rate: float = 10.0,
     output_mode: str = "json",
 ) -> None:
     runs = [
@@ -1635,6 +1660,6 @@ if __name__ == "__main__":
         cons_edge_fraction=0.2,
         cons_max_edge_weight=7.0,
         objective="min_sum_generate",
-        swap_rate=1.0,
+        swap_rate=10.0,
         output_mode="json+simulation-config",
     )

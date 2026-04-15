@@ -36,7 +36,10 @@ There is also a separate LP benchmark module at `linear.py`. That file represent
 global average-rate optimization model and should be treated as an optimal comparison target for
 aggregate outputs, not as the same model or control law as the Gillespie backpressure simulator.
 Its simulation-config output now emits the LP's optimal generation, consumption, and per-node
-swap rates using the same Pydantic schema as the simulator input layer.
+swap rates using the same Pydantic schema as the simulator input layer. When generating LP
+instances from `linear.py`, the `swap_rate` argument is also used as the uniform per-node
+swap cap `K_i` from the paper's LP; the default LP cap is `10.0` so the stock examples are not
+trivially infeasible.
 
 State is stored as dense symmetric matrices:
 
