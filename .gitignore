@@ -1,0 +1,19 @@
+.DS_Store
+
+# Python caches and local environments
+__pycache__/
+.pytest_cache/
+.venv/
+*.py[cod]
+
+# Coverage and test artifacts
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Generated simulation outputs
+output/
