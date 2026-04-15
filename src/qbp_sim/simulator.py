@@ -567,7 +567,7 @@ class GillespieQBPSimulator:
         self.config = self._validate_config(config)
         self.n_nodes = self.config.generation_rates.shape[0]
         self.pair_u, self.pair_v = _build_pair_index(self.n_nodes)
-        self.swap_i, self.swap_y, self.swap_z = _build_swap_candidates(self.config.generation_rates)
+        self.swap_i, self.swap_y, self.swap_z = _build_swap_candidates(self.n_nodes)
         self.state = QBPState(
             q=_init_state_matrix(self.n_nodes, initial_q),
             d=_init_state_matrix(self.n_nodes, initial_d),
@@ -872,25 +872,19 @@ def _build_pair_index(n_nodes: int) -> tuple[IntArray1D, IntArray1D]:
     return np.asarray(pair_u, dtype=np.int64), np.asarray(pair_v, dtype=np.int64)
 
 
-def _build_swap_candidates(generation_rates: FloatMatrix) -> tuple[IntArray1D, IntArray1D, IntArray1D]:
+def _build_swap_candidates(n_nodes: int) -> tuple[IntArray1D, IntArray1D, IntArray1D]:
     swap_i: list[int] = []
     swap_y: list[int] = []
     swap_z: list[int] = []
-    n_nodes = generation_rates.shape[0]
     for i in range(n_nodes):
-        neighbors = [j for j in range(n_nodes) if generation_rates[i, j] > 0.0]
-        for left in range(len(neighbors)):
-            for right in range(left + 1, len(neighbors)):
-                y = neighbors[left]
-                z = neighbors[right]
-                if y < z:
-                    swap_i.append(i)
-                    swap_y.append(y)
-                    swap_z.append(z)
-                else:
-                    swap_i.append(i)
-                    swap_y.append(z)
-                    swap_z.append(y)
+        others = [j for j in range(n_nodes) if j != i]
+        for left in range(len(others)):
+            for right in range(left + 1, len(others)):
+                y = others[left]
+                z = others[right]
+                swap_i.append(i)
+                swap_y.append(y)
+                swap_z.append(z)
     return (
         np.asarray(swap_i, dtype=np.int64),
         np.asarray(swap_y, dtype=np.int64),
