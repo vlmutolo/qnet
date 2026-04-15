@@ -8,7 +8,8 @@ import numpy as np
 
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.examples import build_four_node_counterexample
-from qbp_sim.analysis import summarize_snapshots
+from qbp_sim.experiments import _cycle_consumption_edge_fraction
+from qbp_sim.analysis import plot_snapshot_metric, plot_snapshot_metric_series, summarize_snapshots
 from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator, replay_event_stream
@@ -150,6 +151,44 @@ def test_snapshot_writer_records_service_ratio_and_summary(tmp_path) -> None:
     summary = summarize_snapshots(snapshots)
     assert summary.final_service_ratio == snapshots[-1].service_ratio
     assert summary.demand_arrivals == result.demand_arrivals
+
+
+def test_altair_snapshot_plots_render_to_png(tmp_path) -> None:
+    snapshot_path = tmp_path / "snapshots.jsonl.zst"
+    sim = GillespieQBPSimulator(build_four_node_counterexample(), seed=23)
+
+    with SnapshotWriter(snapshot_path) as snapshot_writer:
+        sim.run(
+            until_time=2.0,
+            max_events=300,
+            sample_every=5,
+            snapshot_writer=snapshot_writer,
+            progress=False,
+        )
+
+    with SnapshotReader(snapshot_path) as snapshot_reader:
+        snapshots = list(snapshot_reader)
+
+    single_plot_path = tmp_path / "service_ratio.png"
+    series_plot_path = tmp_path / "service_ratio_series.png"
+    plot_snapshot_metric(snapshots, "service_ratio", single_plot_path)
+    plot_snapshot_metric_series(
+        [("n=4", snapshots), ("n=8", snapshots)],
+        "service_ratio",
+        series_plot_path,
+    )
+
+    assert single_plot_path.exists()
+    assert single_plot_path.stat().st_size > 0
+    assert series_plot_path.exists()
+    assert series_plot_path.stat().st_size > 0
+
+
+def test_cycle_consumption_edge_fraction_scales_with_graph_size() -> None:
+    assert np.isclose(_cycle_consumption_edge_fraction(4, None), 2.0 / 6.0)
+    assert np.isclose(_cycle_consumption_edge_fraction(8, None), 4.0 / 28.0)
+    assert np.isclose(_cycle_consumption_edge_fraction(64, None), 32.0 / 2016.0)
+    assert _cycle_consumption_edge_fraction(16, 0.125) == 0.125
 
 
 def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) -> None:
@@ -309,6 +348,28 @@ def test_lp_cycle_bp_service_ratio_converges_near_one(tmp_path) -> None:
     assert short_ratio > 0.90
     assert long_ratio > 0.97
     assert long_ratio > short_ratio
+
+
+def test_single_run_topology_returns_solution_config(tmp_path) -> None:
+    linear_path = Path(__file__).resolve().parents[1] / "linear.py"
+    spec = importlib.util.spec_from_file_location("linear_module_under_test_return", linear_path)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    config_path = tmp_path / "cycle4_lp_config.json"
+    returned = module.single_run_topology(
+        topology="cycle",
+        num_nodes=4,
+        seed=4,
+        output_mode="simulation-config",
+        simulation_config_output_path=str(config_path),
+    )
+
+    assert returned is not None
+    loaded = SimulationInputConfig.from_json_file(config_path)
+    assert returned.model_dump() == loaded.model_dump()
 
 
 def test_should_use_progress_respects_tty_and_term(monkeypatch) -> None:

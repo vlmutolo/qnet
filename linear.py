@@ -17,7 +17,7 @@ import json
 import os
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import altair as alt
 import networkx as nx
 import numpy as np
 import scipy.sparse as sp
@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 from scipy.optimize import linprog
 from tqdm import tqdm
 
+from qbp_sim.analysis import save_chart
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.progress import should_use_progress
 
@@ -1091,55 +1092,78 @@ def plot_swaps_and_maxgen_vs_nodes(
             ratio_maxgen_arr_nocap[finite].std(ddof=0) if finite.any() else np.nan
         )
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(8, 6))
-    # Top subplot: ratio Path/LP total swaps
-    axes[0].errorbar(
-        Ns,
-        ratio_swaps_means,
-        yerr=ratio_swaps_stds,
-        fmt="-o",
-        capsize=4,
-        label="Path/LP swaps",
+    rows: list[dict[str, float | int | str]] = []
+    for idx, n_nodes in enumerate(Ns):
+        rows.extend(
+            [
+                {
+                    "N": n_nodes,
+                    "panel": "Path/LP total swaps",
+                    "series": "Path/LP swaps",
+                    "mean": ratio_swaps_means[idx],
+                    "std": ratio_swaps_stds[idx],
+                    "lower": ratio_swaps_means[idx] - ratio_swaps_stds[idx],
+                    "upper": ratio_swaps_means[idx] + ratio_swaps_stds[idx],
+                },
+                {
+                    "N": n_nodes,
+                    "panel": "Path/LP total swaps",
+                    "series": "Path/LP (no max cap) swaps",
+                    "mean": ratio_swaps_means_nocap[idx],
+                    "std": ratio_swaps_stds_nocap[idx],
+                    "lower": ratio_swaps_means_nocap[idx] - ratio_swaps_stds_nocap[idx],
+                    "upper": ratio_swaps_means_nocap[idx] + ratio_swaps_stds_nocap[idx],
+                },
+                {
+                    "N": n_nodes,
+                    "panel": "Path/LP max per-edge gen",
+                    "series": "Path/LP max gen/edge",
+                    "mean": ratio_maxgen_means[idx],
+                    "std": ratio_maxgen_stds[idx],
+                    "lower": ratio_maxgen_means[idx] - ratio_maxgen_stds[idx],
+                    "upper": ratio_maxgen_means[idx] + ratio_maxgen_stds[idx],
+                },
+                {
+                    "N": n_nodes,
+                    "panel": "Path/LP max per-edge gen",
+                    "series": "Path/LP (no max cap) max gen/edge",
+                    "mean": ratio_maxgen_means_nocap[idx],
+                    "std": ratio_maxgen_stds_nocap[idx],
+                    "lower": ratio_maxgen_means_nocap[idx] - ratio_maxgen_stds_nocap[idx],
+                    "upper": ratio_maxgen_means_nocap[idx] + ratio_maxgen_stds_nocap[idx],
+                },
+            ]
+        )
+
+    base = alt.Chart(alt.Data(values=rows)).encode(
+        x=alt.X("N:Q", title="Number of nodes (N)"),
+        color=alt.Color("series:N", title="series"),
+        tooltip=[
+            alt.Tooltip("panel:N"),
+            alt.Tooltip("series:N"),
+            alt.Tooltip("N:Q"),
+            alt.Tooltip("mean:Q", format=".6f"),
+            alt.Tooltip("std:Q", format=".6f"),
+        ],
     )
-    axes[0].errorbar(
-        Ns,
-        ratio_swaps_means_nocap,
-        yerr=ratio_swaps_stds_nocap,
-        fmt="-s",
-        capsize=4,
-        label="Path/LP (no max cap) swaps",
+    error_bars = base.mark_errorbar().encode(
+        y=alt.Y("lower:Q", title=None),
+        y2="upper:Q",
     )
-    axes[0].axhline(1.0, color="k", linestyle="--", alpha=0.5)
-    axes[0].set_ylabel("Path/LP total swaps")
-    axes[0].grid(True, linestyle="--", alpha=0.4)
-    axes[0].legend()
-    # Bottom subplot: ratio Path/LP max per-edge generation
-    axes[1].errorbar(
-        Ns,
-        ratio_maxgen_means,
-        yerr=ratio_maxgen_stds,
-        fmt="-o",
-        capsize=4,
-        label="Path/LP max gen/edge",
+    lines = base.mark_line(point=True, strokeWidth=2.0).encode(
+        y=alt.Y("mean:Q", title=None),
     )
-    axes[1].errorbar(
-        Ns,
-        ratio_maxgen_means_nocap,
-        yerr=ratio_maxgen_stds_nocap,
-        fmt="-s",
-        capsize=4,
-        label="Path/LP (no max cap) max gen/edge",
+    reference = (
+        alt.Chart(alt.Data(values=[{"value": 1.0}]))
+        .mark_rule(strokeDash=[6, 4], opacity=0.5)
+        .encode(y="value:Q")
     )
-    axes[1].axhline(1.0, color="k", linestyle="--", alpha=0.5)
-    axes[1].set_xlabel("Number of nodes (N)")
-    axes[1].set_ylabel("Path/LP max per-edge gen")
-    axes[1].grid(True, linestyle="--", alpha=0.4)
-    axes[1].legend()
-    fig.suptitle(
-        "Ratios (Path/LP): Swaps and Max Per-Edge Generation vs Number of Nodes"
+    chart = alt.layer(error_bars, lines, reference).facet(
+        row=alt.Row("panel:N", header=alt.Header(labelFontSize=12, title=None))
+    ).properties(
+        title="Ratios (Path/LP): Swaps and Max Per-Edge Generation vs Number of Nodes"
     )
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(save_path)
+    save_chart(chart, save_path)
     print(f"Graph saved to: {save_path}")
 
 
@@ -1322,7 +1346,7 @@ def single_run_topology(
     json_pretty: bool = True,
     json_emit_full_matrices: bool = True,
     output_mode: str = "json",
-):
+) -> SimulationInputConfig | None:
     valid_output_modes = {"json", "simulation-config", "json+simulation-config"}
     if output_mode not in valid_output_modes:
         raise ValueError(
@@ -1440,7 +1464,7 @@ def single_run_topology(
                 json_output_path=simulation_config_output_path,
                 json_pretty=json_pretty,
             )
-        return
+        return None
 
     print(
         f"\n=== OPTIMIZATION RESULTS ({topology.upper()} GEN + SPARSE CONSUMPTION) ==="
@@ -1540,6 +1564,7 @@ def single_run_topology(
             json_output_path=simulation_config_output_path,
             json_pretty=json_pretty,
         )
+    return solution_simulation_input
 
 
 def single_run_cycle(

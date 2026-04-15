@@ -72,6 +72,11 @@ class QBPState:
     alpha: IntMatrix
     h_r: IntMatrix
     h_mu: IntArray1D
+    total_virtual_backlog_count: int = 0
+    total_service_deficit_count: int = 0
+    total_swap_deficit_count: int = 0
+    total_inventory_count: int = 0
+    total_scarcity_count: int = 0
     time: float = 0.0
     events_processed: int = 0
     demand_arrivals: int = 0
@@ -83,27 +88,27 @@ class QBPState:
 
     @property
     def total_virtual_backlog(self) -> int:
-        return int(np.triu(self.d, k=1).sum())
+        return self.total_virtual_backlog_count
 
     @property
     def total_service_deficit(self) -> int:
-        return int(np.triu(self.h_r, k=1).sum())
+        return self.total_service_deficit_count
 
     @property
     def total_swap_deficit(self) -> int:
-        return int(self.h_mu.sum())
+        return self.total_swap_deficit_count
 
     @property
     def total_backlog(self) -> int:
-        return self.total_virtual_backlog + self.total_service_deficit
+        return self.total_virtual_backlog_count + self.total_service_deficit_count
 
     @property
     def total_inventory(self) -> int:
-        return int(np.triu(self.q, k=1).sum())
+        return self.total_inventory_count
 
     @property
     def total_scarcity(self) -> int:
-        return int(np.triu(self.alpha, k=1).sum())
+        return self.total_scarcity_count
 
     @property
     def service_ratio(self) -> float:
@@ -318,41 +323,67 @@ class QBPEventApplier:
         if event.event_type == "demand_arrival":
             _apply_demand_arrival(state.d, _require(event.x, "x"), _require(event.y, "y"))
             state.demand_arrivals += 1
+            state.total_virtual_backlog_count += 1
         elif event.event_type == "pair_generation":
-            _apply_pair_generation(state.q, state.alpha, _require(event.x, "x"), _require(event.y, "y"))
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
+            old_scarcity = state.alpha[x, y]
+            _apply_pair_generation(state.q, state.alpha, x, y)
             state.pair_generations += 1
+            state.total_inventory_count += 1
+            if old_scarcity > 0:
+                state.total_scarcity_count -= 1
         elif event.event_type == "virtual_service":
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
             _apply_virtual_service(
                 state.d,
                 state.alpha,
                 state.h_r,
-                _require(event.x, "x"),
-                _require(event.y, "y"),
+                x,
+                y,
             )
             state.virtual_service_requests += 1
+            state.total_virtual_backlog_count -= 1
+            state.total_service_deficit_count += 1
+            state.total_scarcity_count += 1
         elif event.event_type == "virtual_swap":
+            swap_idx = _require(event.swap_idx, "swap_idx")
+            i = _require(event.i, "i")
+            y = _require(event.y, "y")
+            z = _require(event.z, "z")
+            old_output_scarcity = state.alpha[y, z]
             _apply_virtual_swap(
                 state.alpha,
                 state.h_mu,
-                _require(event.swap_idx, "swap_idx"),
-                _require(event.i, "i"),
-                _require(event.y, "y"),
-                _require(event.z, "z"),
+                swap_idx,
+                i,
+                y,
+                z,
             )
             state.virtual_swap_requests += 1
+            state.total_swap_deficit_count += 1
+            state.total_scarcity_count += 2
+            if old_output_scarcity > 0:
+                state.total_scarcity_count -= 1
         elif event.event_type == "physical_service":
             _apply_physical_service(state.q, state.h_r, _require(event.x, "x"), _require(event.y, "y"))
             state.services_completed += 1
+            state.total_inventory_count -= 1
+            state.total_service_deficit_count -= 1
         elif event.event_type == "physical_swap":
+            swap_idx = _require(event.swap_idx, "swap_idx")
             _apply_physical_swap(
                 state.q,
                 state.h_mu,
-                _require(event.swap_idx, "swap_idx"),
+                swap_idx,
                 _require(event.i, "i"),
                 _require(event.y, "y"),
                 _require(event.z, "z"),
             )
             state.swaps_completed += 1
+            state.total_inventory_count -= 1
+            state.total_swap_deficit_count -= 1
         else:
             raise ValueError(f"Unknown event type: {event.event_type}")
 
@@ -385,6 +416,8 @@ class GillespieQBPEventProducer:
         self.demand_pair_rates = _matrix_to_pair_vector(config.demand_rates, pair_u, pair_v)
         self.generation_pair_rates = _matrix_to_pair_vector(config.generation_rates, pair_u, pair_v)
         self.service_pair_rates = _matrix_to_pair_vector(config.service_rates, pair_u, pair_v)
+        self.demand_total = float(self.demand_pair_rates.sum())
+        self.generation_total = float(self.generation_pair_rates.sum())
         self.active_virtual_service_rates = np.zeros_like(self.service_pair_rates)
         self.active_virtual_swap_rates = np.zeros(swap_i.shape[0], dtype=np.float64)
         self.active_physical_service_rates = np.zeros_like(self.service_pair_rates)
@@ -426,8 +459,8 @@ class GillespieQBPEventProducer:
             self.active_physical_swap_rates,
         )
 
-        demand_total = float(self.demand_pair_rates.sum())
-        generation_total = float(self.generation_pair_rates.sum())
+        demand_total = self.demand_total
+        generation_total = self.generation_total
         total_rate = (
             demand_total
             + generation_total
@@ -568,12 +601,22 @@ class GillespieQBPSimulator:
         self.n_nodes = self.config.generation_rates.shape[0]
         self.pair_u, self.pair_v = _build_pair_index(self.n_nodes)
         self.swap_i, self.swap_y, self.swap_z = _build_swap_candidates(self.n_nodes)
+        initial_q_matrix = _init_state_matrix(self.n_nodes, initial_q)
+        initial_d_matrix = _init_state_matrix(self.n_nodes, initial_d)
+        initial_alpha_matrix = _init_state_matrix(self.n_nodes, initial_alpha)
+        initial_h_r_matrix = _init_state_matrix(self.n_nodes, initial_h_r)
+        initial_h_mu_array = _init_swap_counter(self.swap_i.shape[0], initial_h_mu)
         self.state = QBPState(
-            q=_init_state_matrix(self.n_nodes, initial_q),
-            d=_init_state_matrix(self.n_nodes, initial_d),
-            alpha=_init_state_matrix(self.n_nodes, initial_alpha),
-            h_r=_init_state_matrix(self.n_nodes, initial_h_r),
-            h_mu=_init_swap_counter(self.swap_i.shape[0], initial_h_mu),
+            q=initial_q_matrix,
+            d=initial_d_matrix,
+            alpha=initial_alpha_matrix,
+            h_r=initial_h_r_matrix,
+            h_mu=initial_h_mu_array,
+            total_virtual_backlog_count=_upper_triangle_sum(initial_d_matrix),
+            total_service_deficit_count=_upper_triangle_sum(initial_h_r_matrix),
+            total_swap_deficit_count=int(initial_h_mu_array.sum()),
+            total_inventory_count=_upper_triangle_sum(initial_q_matrix),
+            total_scarcity_count=_upper_triangle_sum(initial_alpha_matrix),
         )
         self.producer = GillespieQBPEventProducer(
             config=self.config,
@@ -624,22 +667,35 @@ class GillespieQBPSimulator:
         last_snapshot_key: tuple[int, float] | None = None
         use_progress = should_use_progress() if progress is None else progress
 
-        with tqdm(
-            total=max_events,
-            desc="simulate",
-            unit="event",
-            disable=not use_progress,
-        ) as progress_bar:
+        if use_progress:
+            with tqdm(
+                total=max_events,
+                desc="simulate",
+                unit="event",
+            ) as progress_bar:
+                while self.state.time < until_time and self.state.events_processed < max_events:
+                    event = self.step(until_time=until_time, trace_writer=trace_writer)
+                    if event is None:
+                        break
+                    progress_bar.update(1)
+                    if self.state.events_processed % 1000 == 0 or self.state.time >= until_time:
+                        progress_bar.set_postfix(
+                            time=f"{self.state.time:.3f}",
+                            backlog=self.state.total_backlog,
+                        )
+                    if sample_every > 0 and self.state.events_processed % sample_every == 0:
+                        if snapshot_writer is not None:
+                            snapshot_writer.write(self.build_snapshot())
+                        last_snapshot_key = (self.state.events_processed, self.state.time)
+                        sample_times.append(self.state.time)
+                        backlog_samples.append(self.state.total_backlog)
+                        inventory_samples.append(self.state.total_inventory)
+                        alpha_samples.append(self.state.total_scarcity)
+        else:
             while self.state.time < until_time and self.state.events_processed < max_events:
                 event = self.step(until_time=until_time, trace_writer=trace_writer)
                 if event is None:
                     break
-                progress_bar.update(1)
-                if self.state.events_processed % 1000 == 0 or self.state.time >= until_time:
-                    progress_bar.set_postfix(
-                        time=f"{self.state.time:.3f}",
-                        backlog=self.state.total_backlog,
-                    )
                 if sample_every > 0 and self.state.events_processed % sample_every == 0:
                     if snapshot_writer is not None:
                         snapshot_writer.write(self.build_snapshot())
@@ -676,19 +732,30 @@ class GillespieQBPSimulator:
         last_snapshot_key: tuple[int, float] | None = None
         use_progress = should_use_progress() if progress is None else progress
 
-        with tqdm(
-            desc="replay",
-            unit="event",
-            disable=not use_progress,
-        ) as progress_bar:
+        if use_progress:
+            with tqdm(
+                desc="replay",
+                unit="event",
+            ) as progress_bar:
+                for event in events:
+                    self.apply_event(event, trace_writer=trace_writer)
+                    progress_bar.update(1)
+                    if self.state.events_processed % 1000 == 0:
+                        progress_bar.set_postfix(
+                            time=f"{self.state.time:.3f}",
+                            backlog=self.state.total_backlog,
+                        )
+                    if sample_every > 0 and self.state.events_processed % sample_every == 0:
+                        if snapshot_writer is not None:
+                            snapshot_writer.write(self.build_snapshot())
+                        last_snapshot_key = (self.state.events_processed, self.state.time)
+                        sample_times.append(self.state.time)
+                        backlog_samples.append(self.state.total_backlog)
+                        inventory_samples.append(self.state.total_inventory)
+                        alpha_samples.append(self.state.total_scarcity)
+        else:
             for event in events:
                 self.apply_event(event, trace_writer=trace_writer)
-                progress_bar.update(1)
-                if self.state.events_processed % 1000 == 0:
-                    progress_bar.set_postfix(
-                        time=f"{self.state.time:.3f}",
-                        backlog=self.state.total_backlog,
-                    )
                 if sample_every > 0 and self.state.events_processed % sample_every == 0:
                     if snapshot_writer is not None:
                         snapshot_writer.write(self.build_snapshot())
@@ -921,6 +988,10 @@ def _init_swap_counter(size: int, value: IntArray1D | None) -> IntArray1D:
     if np.any(counter < 0):
         raise ValueError("Initial swap counters must be non-negative.")
     return counter.copy()
+
+
+def _upper_triangle_sum(matrix: IntMatrix) -> int:
+    return int(np.triu(matrix, k=1).sum())
 
 
 def _sample_index(rng: np.random.Generator, rates: Array1D, total_rate: float) -> int:

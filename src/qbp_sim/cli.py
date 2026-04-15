@@ -6,6 +6,7 @@ from pathlib import Path
 from qbp_sim.analysis import plot_snapshot_metric, summarize_snapshots
 from qbp_sim.config import load_simulation_config
 from qbp_sim.examples import build_four_node_counterexample
+from qbp_sim.experiments import plot_cycle_service_ratio_runs, run_cycle_service_ratio_experiment
 from qbp_sim.simulator import GillespieQBPSimulator, replay_event_stream
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 from qbp_sim.trace import EventTraceReader, EventTraceWriter
@@ -146,6 +147,83 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Write the requested plot to an image file.",
     )
+
+    cycle_parser = subparsers.add_parser(
+        "cycle-service-ratio",
+        help="Solve LP-derived cycle instances, run BP on them, and plot service-gap decay.",
+    )
+    cycle_parser.add_argument(
+        "--sizes",
+        type=int,
+        nargs="+",
+        default=[4, 8, 16, 32, 64],
+        help="Cycle sizes to generate and simulate.",
+    )
+    cycle_parser.add_argument(
+        "--until",
+        type=float,
+        default=100.0,
+        help="Stop each BP simulation at this simulation time.",
+    )
+    cycle_parser.add_argument(
+        "--max-events",
+        type=int,
+        default=200_000,
+        help="Stop each BP simulation after this many events if it has not reached --until.",
+    )
+    cycle_parser.add_argument(
+        "--sample-every",
+        type=int,
+        default=500,
+        help="Record a snapshot every N events for plotting.",
+    )
+    cycle_parser.add_argument(
+        "--seed-base",
+        type=int,
+        default=0,
+        help="Base seed; each cycle run uses seed_base + n.",
+    )
+    cycle_parser.add_argument(
+        "--gen-scale",
+        type=float,
+        default=10.0,
+        help="Scale factor applied to cycle-edge generation capacities before solving the LP.",
+    )
+    cycle_parser.add_argument(
+        "--cons-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to sampled consumption demands before solving the LP.",
+    )
+    cycle_parser.add_argument(
+        "--cons-edge-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Override the fraction of end-to-end consumption pairs given nonzero demand. "
+            "By default the sweep uses a size-aware rule with about n/2 active demand pairs."
+        ),
+    )
+    cycle_parser.add_argument(
+        "--swap-rate",
+        type=float,
+        default=100.0,
+        help="Uniform per-node swap cap used in the LP instances.",
+    )
+    cycle_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output/cycle_service_ratio"),
+        metavar="OUTDIR",
+        help="Directory to write LP outputs and BP snapshots.",
+    )
+    cycle_parser.add_argument(
+        "--plot-out",
+        type=Path,
+        default=Path("output/plots/cycle_service_ratio_gap.png"),
+        metavar="OUTFILE",
+        help="Path for the combined Altair-rendered plot.",
+    )
     return parser
 
 
@@ -273,3 +351,26 @@ def main(argv: list[str] | None = None) -> None:
                 parser.error("--plot-out is required when --plot-metric is provided.")
             plot_snapshot_metric(snapshots=snapshots, metric=args.plot_metric, output_path=args.plot_out)
             print(f"\nWrote plot to {args.plot_out}")
+    if args.command == "cycle-service-ratio":
+        runs = run_cycle_service_ratio_experiment(
+            cycle_sizes=args.sizes,
+            output_dir=args.output_dir,
+            until_time=args.until,
+            max_events=args.max_events,
+            sample_every=args.sample_every,
+            seed_base=args.seed_base,
+            gen_scale=args.gen_scale,
+            cons_scale=args.cons_scale,
+            cons_edge_fraction=args.cons_edge_fraction,
+            swap_rate=args.swap_rate,
+        )
+        plot_cycle_service_ratio_runs(runs, args.plot_out)
+        print("Cycle service-gap experiment")
+        for run in runs:
+            summary = run.summary
+            print(
+                f"n={run.n_nodes} final_time={summary.final_time:.3f} "
+                f"final_service_ratio={summary.final_service_ratio:.6f} "
+                f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
+            )
+        print(f"\nWrote plot to {args.plot_out}")
