@@ -139,46 +139,6 @@ def _compute_active_virtual_service_rates(
 
 
 @njit(cache=True)
-def _compute_active_virtual_swap_choices(
-    alpha: IntMatrix,
-    swap_i: IntArray1D,
-    swap_y: IntArray1D,
-    swap_z: IntArray1D,
-    swap_rates: Array1D,
-    best_weight: IntArray1D,
-    best_idx: IntArray1D,
-    choice_idx_out: IntArray1D,
-    choice_rate_out: Array1D,
-) -> tuple[float, int]:
-    total = 0.0
-    n_nodes = swap_rates.shape[0]
-
-    for i in range(n_nodes):
-        best_weight[i] = 0
-        best_idx[i] = -1
-
-    for idx in range(swap_i.shape[0]):
-        i = swap_i[idx]
-        y = swap_y[idx]
-        z = swap_z[idx]
-        weight = alpha[y, z] - alpha[i, y] - alpha[i, z]
-        if weight > best_weight[i]:
-            best_weight[i] = weight
-            best_idx[i] = idx
-
-    active_count = 0
-    for i in range(n_nodes):
-        idx = best_idx[i]
-        if idx >= 0:
-            rate = swap_rates[i]
-            choice_idx_out[active_count] = idx
-            choice_rate_out[active_count] = rate
-            total += rate
-            active_count += 1
-    return total, active_count
-
-
-@njit(cache=True)
 def _compute_active_physical_service_rates(
     q: IntMatrix,
     h_r: IntMatrix,
@@ -200,48 +160,92 @@ def _compute_active_physical_service_rates(
 
 
 @njit(cache=True)
-def _compute_active_physical_swap_choices(
-    q: IntMatrix,
-    h_mu: IntArray1D,
-    swap_i: IntArray1D,
+def _best_virtual_swap_for_node(
+    alpha: IntMatrix,
+    node: int,
+    swap_node_starts: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
-    swap_rates: Array1D,
-    best_deficit: IntArray1D,
-    best_idx: IntArray1D,
-    choice_idx_out: IntArray1D,
-    choice_rate_out: Array1D,
-) -> tuple[float, int]:
-    total = 0.0
-    n_nodes = swap_rates.shape[0]
-
-    for i in range(n_nodes):
-        best_deficit[i] = 0
-        best_idx[i] = -1
-
-    for idx in range(swap_i.shape[0]):
-        if h_mu[idx] <= 0:
-            continue
-        i = swap_i[idx]
+) -> tuple[int, int]:
+    best_weight = 0
+    best_idx = -1
+    start = swap_node_starts[node]
+    stop = swap_node_starts[node + 1]
+    for idx in range(start, stop):
         y = swap_y[idx]
         z = swap_z[idx]
-        if q[i, y] <= 0 or q[i, z] <= 0:
+        weight = alpha[y, z] - alpha[node, y] - alpha[node, z]
+        if weight > best_weight:
+            best_weight = weight
+            best_idx = idx
+    return best_weight, best_idx
+
+
+@njit(cache=True)
+def _best_physical_swap_for_node(
+    q: IntMatrix,
+    h_mu: IntArray1D,
+    node: int,
+    swap_node_starts: IntArray1D,
+    swap_y: IntArray1D,
+    swap_z: IntArray1D,
+) -> tuple[int, int]:
+    best_deficit = 0
+    best_idx = -1
+    start = swap_node_starts[node]
+    stop = swap_node_starts[node + 1]
+    for idx in range(start, stop):
+        if h_mu[idx] <= 0:
+            continue
+        y = swap_y[idx]
+        z = swap_z[idx]
+        if q[node, y] <= 0 or q[node, z] <= 0:
             continue
         deficit = h_mu[idx]
-        if deficit > best_deficit[i]:
-            best_deficit[i] = deficit
-            best_idx[i] = idx
+        if deficit > best_deficit:
+            best_deficit = deficit
+            best_idx = idx
+    return best_deficit, best_idx
 
-    active_count = 0
-    for i in range(n_nodes):
-        idx = best_idx[i]
-        if idx >= 0:
-            rate = swap_rates[i]
-            choice_idx_out[active_count] = idx
-            choice_rate_out[active_count] = rate
-            total += rate
-            active_count += 1
-    return total, active_count
+
+@njit(cache=True)
+def _update_virtual_swap_alpha_change_nonendpoints(
+    alpha: IntMatrix,
+    a: int,
+    b: int,
+    delta: int,
+    swap_lookup: NDArray[np.int64],
+    swap_rates: Array1D,
+    best_weight: IntArray1D,
+    best_idx: IntArray1D,
+    node_rates: Array1D,
+    rescan_nodes_out: IntArray1D,
+) -> tuple[float, int]:
+    total_delta = 0.0
+    rescan_count = 0
+    n_nodes = best_weight.shape[0]
+    for node in range(n_nodes):
+        if node == a or node == b:
+            continue
+        candidate_idx = swap_lookup[node, a, b]
+        if candidate_idx < 0:
+            continue
+        current_idx = best_idx[node]
+        new_weight = alpha[a, b] - alpha[node, a] - alpha[node, b]
+        if current_idx == candidate_idx:
+            if delta < 0:
+                rescan_nodes_out[rescan_count] = node
+                rescan_count += 1
+            else:
+                best_weight[node] = new_weight
+        elif delta > 0 and new_weight > best_weight[node]:
+            old_rate = node_rates[node]
+            new_rate = swap_rates[node]
+            best_weight[node] = new_weight
+            best_idx[node] = candidate_idx
+            node_rates[node] = new_rate
+            total_delta += new_rate - old_rate
+    return total_delta, rescan_count
 
 
 @njit(cache=True)
@@ -420,11 +424,15 @@ class GillespieQBPEventProducer:
         seed: int | None = None,
     ) -> None:
         self.config = config
+        self.n_nodes = config.swap_rates.shape[0]
         self.pair_u = pair_u
         self.pair_v = pair_v
         self.swap_i = swap_i
         self.swap_y = swap_y
         self.swap_z = swap_z
+        self.pair_lookup = _build_pair_lookup(self.n_nodes, pair_u, pair_v)
+        self.swap_node_starts = _build_swap_node_starts(self.n_nodes, swap_i)
+        self.swap_lookup = _build_swap_lookup(self.n_nodes, swap_i, swap_y, swap_z)
         self.demand_pair_rates = _matrix_to_pair_vector(config.demand_rates, pair_u, pair_v)
         self.generation_pair_rates = _matrix_to_pair_vector(config.generation_rates, pair_u, pair_v)
         self.service_pair_rates = _matrix_to_pair_vector(config.service_rates, pair_u, pair_v)
@@ -432,19 +440,21 @@ class GillespieQBPEventProducer:
         self.generation_total = float(self.generation_pair_rates.sum())
         self.active_virtual_service_rates = np.zeros_like(self.service_pair_rates)
         self.active_physical_service_rates = np.zeros_like(self.service_pair_rates)
-        n_nodes = config.swap_rates.shape[0]
-        self.virtual_swap_best_weight = np.zeros(n_nodes, dtype=np.int64)
-        self.virtual_swap_best_idx = np.full(n_nodes, -1, dtype=np.int64)
-        self.active_virtual_swap_choice_idx = np.empty(n_nodes, dtype=np.int64)
-        self.active_virtual_swap_choice_rates = np.zeros(n_nodes, dtype=np.float64)
-        self.physical_swap_best_deficit = np.zeros(n_nodes, dtype=np.int64)
-        self.physical_swap_best_idx = np.full(n_nodes, -1, dtype=np.int64)
-        self.active_physical_swap_choice_idx = np.empty(n_nodes, dtype=np.int64)
-        self.active_physical_swap_choice_rates = np.zeros(n_nodes, dtype=np.float64)
+        self.active_virtual_service_total = 0.0
+        self.active_physical_service_total = 0.0
+        self.virtual_swap_best_weight = np.zeros(self.n_nodes, dtype=np.int64)
+        self.virtual_swap_best_idx = np.full(self.n_nodes, -1, dtype=np.int64)
+        self.virtual_swap_node_rates = np.zeros(self.n_nodes, dtype=np.float64)
+        self.active_virtual_swap_total = 0.0
+        self.virtual_swap_rescan_nodes = np.empty(self.n_nodes, dtype=np.int64)
+        self.physical_swap_best_deficit = np.zeros(self.n_nodes, dtype=np.int64)
+        self.physical_swap_best_idx = np.full(self.n_nodes, -1, dtype=np.int64)
+        self.physical_swap_node_rates = np.zeros(self.n_nodes, dtype=np.float64)
+        self.active_physical_swap_total = 0.0
         self.rng = np.random.default_rng(seed)
 
-    def produce(self, state: QBPState, until_time: float | None = None) -> tuple[QBPEvent | None, bool]:
-        virtual_service_total = _compute_active_virtual_service_rates(
+    def initialize(self, state: QBPState) -> None:
+        self.active_virtual_service_total = _compute_active_virtual_service_rates(
             state.d,
             state.alpha,
             self.pair_u,
@@ -452,18 +462,7 @@ class GillespieQBPEventProducer:
             self.service_pair_rates,
             self.active_virtual_service_rates,
         )
-        virtual_swap_total, virtual_swap_count = _compute_active_virtual_swap_choices(
-            state.alpha,
-            self.swap_i,
-            self.swap_y,
-            self.swap_z,
-            self.config.swap_rates,
-            self.virtual_swap_best_weight,
-            self.virtual_swap_best_idx,
-            self.active_virtual_swap_choice_idx,
-            self.active_virtual_swap_choice_rates,
-        )
-        physical_service_total = _compute_active_physical_service_rates(
+        self.active_physical_service_total = _compute_active_physical_service_rates(
             state.q,
             state.h_r,
             self.pair_u,
@@ -471,21 +470,143 @@ class GillespieQBPEventProducer:
             self.service_pair_rates,
             self.active_physical_service_rates,
         )
-        physical_swap_total, physical_swap_count = _compute_active_physical_swap_choices(
-            state.q,
-            state.h_mu,
-            self.swap_i,
+        self.active_virtual_swap_total = 0.0
+        self.active_physical_swap_total = 0.0
+        for node in range(self.n_nodes):
+            self._recompute_virtual_swap_node(state, node)
+            self._recompute_physical_swap_node(state, node)
+
+    def _recompute_virtual_service_pair(self, state: QBPState, x: int, y: int) -> None:
+        idx = int(self.pair_lookup[x, y])
+        old_rate = float(self.active_virtual_service_rates[idx])
+        new_rate = 0.0
+        if state.d[x, y] > 0 and state.d[x, y] >= state.alpha[x, y]:
+            new_rate = float(self.service_pair_rates[idx])
+        self.active_virtual_service_rates[idx] = new_rate
+        self.active_virtual_service_total += new_rate - old_rate
+
+    def _recompute_physical_service_pair(self, state: QBPState, x: int, y: int) -> None:
+        idx = int(self.pair_lookup[x, y])
+        old_rate = float(self.active_physical_service_rates[idx])
+        new_rate = 0.0
+        if state.h_r[x, y] > 0 and state.q[x, y] > 0:
+            new_rate = float(self.service_pair_rates[idx])
+        self.active_physical_service_rates[idx] = new_rate
+        self.active_physical_service_total += new_rate - old_rate
+
+    def _recompute_virtual_swap_node(self, state: QBPState, node: int) -> None:
+        old_rate = float(self.virtual_swap_node_rates[node])
+        best_weight, best_idx = _best_virtual_swap_for_node(
+            state.alpha,
+            node,
+            self.swap_node_starts,
             self.swap_y,
             self.swap_z,
-            self.config.swap_rates,
-            self.physical_swap_best_deficit,
-            self.physical_swap_best_idx,
-            self.active_physical_swap_choice_idx,
-            self.active_physical_swap_choice_rates,
         )
+        self.virtual_swap_best_weight[node] = best_weight
+        self.virtual_swap_best_idx[node] = best_idx
+        new_rate = float(self.config.swap_rates[node]) if best_idx >= 0 else 0.0
+        self.virtual_swap_node_rates[node] = new_rate
+        self.active_virtual_swap_total += new_rate - old_rate
 
+    def _recompute_physical_swap_node(self, state: QBPState, node: int) -> None:
+        old_rate = float(self.physical_swap_node_rates[node])
+        best_deficit, best_idx = _best_physical_swap_for_node(
+            state.q,
+            state.h_mu,
+            node,
+            self.swap_node_starts,
+            self.swap_y,
+            self.swap_z,
+        )
+        self.physical_swap_best_deficit[node] = best_deficit
+        self.physical_swap_best_idx[node] = best_idx
+        new_rate = float(self.config.swap_rates[node]) if best_idx >= 0 else 0.0
+        self.physical_swap_node_rates[node] = new_rate
+        self.active_physical_swap_total += new_rate - old_rate
+
+    def _update_virtual_swap_for_alpha_pair_change(self, state: QBPState, a: int, b: int, delta: int) -> None:
+        self._recompute_virtual_service_pair(state, a, b)
+        self._recompute_virtual_swap_node(state, a)
+        self._recompute_virtual_swap_node(state, b)
+        total_delta, rescan_count = _update_virtual_swap_alpha_change_nonendpoints(
+            state.alpha,
+            a,
+            b,
+            delta,
+            self.swap_lookup,
+            self.config.swap_rates,
+            self.virtual_swap_best_weight,
+            self.virtual_swap_best_idx,
+            self.virtual_swap_node_rates,
+            self.virtual_swap_rescan_nodes,
+        )
+        self.active_virtual_swap_total += total_delta
+        for idx in range(rescan_count):
+            self._recompute_virtual_swap_node(state, int(self.virtual_swap_rescan_nodes[idx]))
+
+    def on_event_applied(self, state: QBPState, event: QBPEvent) -> None:
+        if event.event_type == "demand_arrival":
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
+            self._recompute_virtual_service_pair(state, x, y)
+            return
+
+        if event.event_type == "pair_generation":
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
+            self._recompute_physical_service_pair(state, x, y)
+            self._recompute_physical_swap_node(state, x)
+            self._recompute_physical_swap_node(state, y)
+            self._update_virtual_swap_for_alpha_pair_change(state, x, y, -1)
+            return
+
+        if event.event_type == "virtual_service":
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
+            self._recompute_physical_service_pair(state, x, y)
+            self._update_virtual_swap_for_alpha_pair_change(state, x, y, +1)
+            return
+
+        if event.event_type == "virtual_swap":
+            swap_idx = _require(event.swap_idx, "swap_idx")
+            i = _require(event.i, "i")
+            y = _require(event.y, "y")
+            z = _require(event.z, "z")
+            self._recompute_physical_swap_node(state, i)
+            self._update_virtual_swap_for_alpha_pair_change(state, i, y, +1)
+            self._update_virtual_swap_for_alpha_pair_change(state, i, z, +1)
+            self._update_virtual_swap_for_alpha_pair_change(state, y, z, -1)
+            return
+
+        if event.event_type == "physical_service":
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
+            self._recompute_physical_service_pair(state, x, y)
+            self._recompute_physical_swap_node(state, x)
+            self._recompute_physical_swap_node(state, y)
+            return
+
+        if event.event_type == "physical_swap":
+            swap_idx = _require(event.swap_idx, "swap_idx")
+            i = _require(event.i, "i")
+            y = _require(event.y, "y")
+            z = _require(event.z, "z")
+            self._recompute_physical_service_pair(state, i, y)
+            self._recompute_physical_service_pair(state, i, z)
+            self._recompute_physical_service_pair(state, y, z)
+            self._recompute_physical_swap_node(state, i)
+            self._recompute_physical_swap_node(state, y)
+            self._recompute_physical_swap_node(state, z)
+            return
+
+    def produce(self, state: QBPState, until_time: float | None = None) -> tuple[QBPEvent | None, bool]:
         demand_total = self.demand_total
         generation_total = self.generation_total
+        virtual_service_total = self.active_virtual_service_total
+        virtual_swap_total = self.active_virtual_swap_total
+        physical_service_total = self.active_physical_service_total
+        physical_swap_total = self.active_physical_swap_total
         total_rate = (
             demand_total
             + generation_total
@@ -557,12 +678,8 @@ class GillespieQBPEventProducer:
 
         selector -= virtual_service_total
         if selector < virtual_swap_total:
-            compact_idx = _sample_index(
-                self.rng,
-                self.active_virtual_swap_choice_rates[:virtual_swap_count],
-                virtual_swap_total,
-            )
-            idx = int(self.active_virtual_swap_choice_idx[compact_idx])
+            node = _sample_index(self.rng, self.virtual_swap_node_rates, virtual_swap_total)
+            idx = int(self.virtual_swap_best_idx[node])
             return (
                 QBPEvent(
                     event_index=event_index,
@@ -570,7 +687,7 @@ class GillespieQBPEventProducer:
                     dt=dt,
                     total_rate=total_rate,
                     event_type="virtual_swap",
-                    event_rate=float(self.active_virtual_swap_choice_rates[compact_idx]),
+                    event_rate=float(self.virtual_swap_node_rates[node]),
                     swap_idx=int(idx),
                     i=int(self.swap_i[idx]),
                     y=int(self.swap_y[idx]),
@@ -596,12 +713,8 @@ class GillespieQBPEventProducer:
                 False,
             )
 
-        compact_idx = _sample_index(
-            self.rng,
-            self.active_physical_swap_choice_rates[:physical_swap_count],
-            physical_swap_total,
-        )
-        idx = int(self.active_physical_swap_choice_idx[compact_idx])
+        node = _sample_index(self.rng, self.physical_swap_node_rates, physical_swap_total)
+        idx = int(self.physical_swap_best_idx[node])
         return (
             QBPEvent(
                 event_index=event_index,
@@ -609,7 +722,7 @@ class GillespieQBPEventProducer:
                 dt=dt,
                 total_rate=total_rate,
                 event_type="physical_swap",
-                event_rate=float(self.active_physical_swap_choice_rates[compact_idx]),
+                event_rate=float(self.physical_swap_node_rates[node]),
                 swap_idx=int(idx),
                 i=int(self.swap_i[idx]),
                 y=int(self.swap_y[idx]),
@@ -662,6 +775,7 @@ class GillespieQBPSimulator:
             swap_z=self.swap_z,
             seed=seed,
         )
+        self.producer.initialize(self.state)
         self.applier = QBPEventApplier()
 
     def produce_next_event(self, until_time: float | None = None) -> QBPEvent | None:
@@ -672,9 +786,21 @@ class GillespieQBPSimulator:
 
     def apply_event(self, event: QBPEvent, trace_writer: EventTraceWriter | None = None) -> QBPEvent:
         applied = self.applier.apply(self.state, event)
+        self.producer.on_event_applied(self.state, applied)
         if trace_writer is not None:
             trace_writer.write(applied)
         return applied
+
+    def reset_measurements(self, *, reset_time_origin: bool = True) -> None:
+        self.state.events_processed = 0
+        self.state.demand_arrivals = 0
+        self.state.pair_generations = 0
+        self.state.virtual_service_requests = 0
+        self.state.virtual_swap_requests = 0
+        self.state.services_completed = 0
+        self.state.swaps_completed = 0
+        if reset_time_origin:
+            self.state.time = 0.0
 
     def step(
         self,
@@ -992,6 +1118,43 @@ def _build_swap_candidates(n_nodes: int) -> tuple[IntArray1D, IntArray1D, IntArr
         np.asarray(swap_y, dtype=np.int64),
         np.asarray(swap_z, dtype=np.int64),
     )
+
+
+def _build_pair_lookup(n_nodes: int, pair_u: IntArray1D, pair_v: IntArray1D) -> IntMatrix:
+    lookup = np.full((n_nodes, n_nodes), -1, dtype=np.int64)
+    for idx, (x, y) in enumerate(zip(pair_u, pair_v, strict=True)):
+        lookup[x, y] = idx
+        lookup[y, x] = idx
+    return lookup
+
+
+def _build_swap_node_starts(n_nodes: int, swap_i: IntArray1D) -> IntArray1D:
+    starts = np.zeros(n_nodes + 1, dtype=np.int64)
+    if swap_i.shape[0] == 0:
+        return starts
+    current_node = 0
+    for idx in range(swap_i.shape[0]):
+        node = int(swap_i[idx])
+        while current_node < node:
+            starts[current_node + 1] = idx
+            current_node += 1
+    while current_node < n_nodes:
+        starts[current_node + 1] = swap_i.shape[0]
+        current_node += 1
+    return starts
+
+
+def _build_swap_lookup(
+    n_nodes: int,
+    swap_i: IntArray1D,
+    swap_y: IntArray1D,
+    swap_z: IntArray1D,
+) -> NDArray[np.int64]:
+    lookup = np.full((n_nodes, n_nodes, n_nodes), -1, dtype=np.int64)
+    for idx, (i, y, z) in enumerate(zip(swap_i, swap_y, swap_z, strict=True)):
+        lookup[i, y, z] = idx
+        lookup[i, z, y] = idx
+    return lookup
 
 
 def _matrix_to_pair_vector(matrix: FloatMatrix, pair_u: IntArray1D, pair_v: IntArray1D) -> Array1D:

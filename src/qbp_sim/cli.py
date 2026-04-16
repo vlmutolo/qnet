@@ -6,7 +6,12 @@ from pathlib import Path
 from qbp_sim.analysis import plot_snapshot_metric, summarize_snapshots
 from qbp_sim.config import load_simulation_config
 from qbp_sim.examples import build_four_node_counterexample
-from qbp_sim.experiments import plot_cycle_service_ratio_runs, run_cycle_service_ratio_experiment
+from qbp_sim.experiments import (
+    plot_cycle_service_ratio_runs,
+    plot_generation_multiplier_runs,
+    run_cycle_service_ratio_experiment,
+    run_generation_multiplier_experiment,
+)
 from qbp_sim.simulator import GillespieQBPSimulator, replay_event_stream
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 from qbp_sim.trace import EventTraceReader, EventTraceWriter
@@ -160,6 +165,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cycle sizes to generate and simulate.",
     )
     cycle_parser.add_argument(
+        "--burn-in",
+        type=float,
+        default=0.0,
+        help="Warm the BP simulator to this time, then reset counters/time before the measured run.",
+    )
+    cycle_parser.add_argument(
         "--until",
         type=float,
         default=100.0,
@@ -221,6 +232,95 @@ def _build_parser() -> argparse.ArgumentParser:
         "--plot-out",
         type=Path,
         default=Path("output/plots/cycle_service_ratio_gap.png"),
+        metavar="OUTFILE",
+        help="Path for the combined Altair-rendered plot.",
+    )
+
+    genmult_parser = subparsers.add_parser(
+        "generation-multiplier-service-ratio",
+        help="Solve one LP-derived cycle instance, scale its generation rates, run BP, and plot service-gap decay.",
+    )
+    genmult_parser.add_argument(
+        "--n",
+        type=int,
+        default=16,
+        help="Cycle size to generate, solve, and simulate.",
+    )
+    genmult_parser.add_argument(
+        "--generation-multipliers",
+        type=float,
+        nargs="+",
+        default=[1.0, 1.01, 1.05],
+        help="Multipliers applied to every LP-derived generation rate before running BP.",
+    )
+    genmult_parser.add_argument(
+        "--burn-in",
+        type=float,
+        default=0.0,
+        help="Warm the BP simulator to this time, then reset counters/time before the measured run.",
+    )
+    genmult_parser.add_argument(
+        "--until",
+        type=float,
+        default=100.0,
+        help="Stop each BP simulation at this simulation time.",
+    )
+    genmult_parser.add_argument(
+        "--max-events",
+        type=int,
+        default=200_000,
+        help="Stop each BP simulation after this many events if it has not reached --until.",
+    )
+    genmult_parser.add_argument(
+        "--sample-every",
+        type=int,
+        default=500,
+        help="Record a snapshot every N events for plotting.",
+    )
+    genmult_parser.add_argument(
+        "--seed-base",
+        type=int,
+        default=0,
+        help="Base seed for the LP and each BP run.",
+    )
+    genmult_parser.add_argument(
+        "--gen-scale",
+        type=float,
+        default=10.0,
+        help="Scale factor applied to cycle-edge generation capacities before solving the LP.",
+    )
+    genmult_parser.add_argument(
+        "--cons-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to sampled consumption demands before solving the LP.",
+    )
+    genmult_parser.add_argument(
+        "--cons-edge-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Override the fraction of end-to-end consumption pairs given nonzero demand. "
+            "By default the experiment uses a size-aware rule with about n/2 active demand pairs."
+        ),
+    )
+    genmult_parser.add_argument(
+        "--swap-rate",
+        type=float,
+        default=100.0,
+        help="Uniform per-node swap cap used in the LP instance.",
+    )
+    genmult_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output/generation_multiplier_service_ratio"),
+        metavar="OUTDIR",
+        help="Directory to write LP outputs, scaled configs, and BP snapshots.",
+    )
+    genmult_parser.add_argument(
+        "--plot-out",
+        type=Path,
+        default=Path("output/plots/generation_multiplier_service_ratio_gap.png"),
         metavar="OUTFILE",
         help="Path for the combined Altair-rendered plot.",
     )
@@ -355,6 +455,7 @@ def main(argv: list[str] | None = None) -> None:
         runs = run_cycle_service_ratio_experiment(
             cycle_sizes=args.sizes,
             output_dir=args.output_dir,
+            burn_in_time=args.burn_in,
             until_time=args.until,
             max_events=args.max_events,
             sample_every=args.sample_every,
@@ -370,6 +471,32 @@ def main(argv: list[str] | None = None) -> None:
             summary = run.summary
             print(
                 f"n={run.n_nodes} final_time={summary.final_time:.3f} "
+                f"final_service_ratio={summary.final_service_ratio:.6f} "
+                f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
+            )
+        print(f"\nWrote plot to {args.plot_out}")
+    if args.command == "generation-multiplier-service-ratio":
+        runs = run_generation_multiplier_experiment(
+            n_nodes=args.n,
+            generation_multipliers=args.generation_multipliers,
+            output_dir=args.output_dir,
+            burn_in_time=args.burn_in,
+            until_time=args.until,
+            max_events=args.max_events,
+            sample_every=args.sample_every,
+            seed_base=args.seed_base,
+            gen_scale=args.gen_scale,
+            cons_scale=args.cons_scale,
+            cons_edge_fraction=args.cons_edge_fraction,
+            swap_rate=args.swap_rate,
+        )
+        plot_generation_multiplier_runs(runs, args.plot_out)
+        print("Generation-multiplier service-gap experiment")
+        for run in runs:
+            summary = run.summary
+            print(
+                f"n={run.n_nodes} generation_multiplier={run.generation_multiplier:g} "
+                f"final_time={summary.final_time:.3f} "
                 f"final_service_ratio={summary.final_service_ratio:.6f} "
                 f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
             )

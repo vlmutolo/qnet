@@ -8,7 +8,7 @@ import numpy as np
 
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.examples import build_four_node_counterexample
-from qbp_sim.experiments import _cycle_consumption_edge_fraction
+from qbp_sim.experiments import _cycle_consumption_edge_fraction, _scale_generation_rates
 from qbp_sim.analysis import plot_snapshot_metric, plot_snapshot_metric_series, summarize_snapshots
 from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
@@ -82,6 +82,31 @@ def test_four_node_example_builds_and_runs() -> None:
 
     assert result.events_processed > 0
     assert result.demand_arrivals > 0
+
+
+def test_reset_measurements_keeps_state_but_resets_counters_and_time() -> None:
+    sim = GillespieQBPSimulator(build_four_node_counterexample(), seed=29)
+    sim.run(until_time=2.0, max_events=2_000, sample_every=0, progress=False)
+
+    backlog_before = sim.total_backlog
+    inventory_before = sim.total_inventory
+    scarcity_before = sim.total_scarcity
+    assert sim.events_processed > 0
+    assert sim.time > 0.0
+
+    sim.reset_measurements(reset_time_origin=True)
+
+    assert sim.events_processed == 0
+    assert sim.time == 0.0
+    assert sim.demand_arrivals == 0
+    assert sim.pair_generations == 0
+    assert sim.virtual_service_requests == 0
+    assert sim.virtual_swap_requests == 0
+    assert sim.services_completed == 0
+    assert sim.swaps_completed == 0
+    assert sim.total_backlog == backlog_before
+    assert sim.total_inventory == inventory_before
+    assert sim.total_scarcity == scarcity_before
 
 
 def test_trace_writer_records_every_event(tmp_path) -> None:
@@ -189,6 +214,28 @@ def test_cycle_consumption_edge_fraction_scales_with_graph_size() -> None:
     assert np.isclose(_cycle_consumption_edge_fraction(8, None), 4.0 / 28.0)
     assert np.isclose(_cycle_consumption_edge_fraction(64, None), 32.0 / 2016.0)
     assert _cycle_consumption_edge_fraction(16, 0.125) == 0.125
+
+
+def test_scale_generation_rates_only_scales_generation_matrix() -> None:
+    input_config = SimulationInputConfig(
+        generation_rates=[
+            [0.0, 2.0, 3.0],
+            [2.0, 0.0, 5.0],
+            [3.0, 5.0, 0.0],
+        ],
+        consumption_rates=[
+            [0.0, 7.0, 11.0],
+            [7.0, 0.0, 13.0],
+            [11.0, 13.0, 0.0],
+        ],
+        swap_rates=[17.0, 19.0, 23.0],
+    )
+
+    scaled = _scale_generation_rates(input_config, 1.05)
+
+    assert np.allclose(np.asarray(scaled.generation_rates), np.asarray(input_config.generation_rates) * 1.05)
+    assert np.allclose(np.asarray(scaled.consumption_rates), np.asarray(input_config.consumption_rates))
+    assert np.allclose(np.asarray(scaled.swap_rates), np.asarray(input_config.swap_rates))
 
 
 def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) -> None:
