@@ -565,6 +565,45 @@ def create_chain_adjacency_matrix(
     return g
 
 
+def create_node_count_grid_adjacency_matrix(
+    num_nodes: int, edge_weight: float = 10.0
+) -> NDArray[np.float64]:
+    """
+    Create a connected rectangular grid-like graph with exactly `num_nodes` nodes.
+
+    Nodes are placed row-major into the smallest near-square rectangle that can
+    hold `num_nodes`; edges connect horizontal and vertical neighbors that both
+    exist. This supports non-square requests such as 5, 10, 15, and 20 nodes.
+    """
+    if num_nodes < 2:
+        raise ValueError(f"grid graph requires num_nodes >= 2 (got {num_nodes})")
+
+    rows = int(np.floor(np.sqrt(num_nodes)))
+    cols = int(np.ceil(num_nodes / rows))
+    while rows * cols < num_nodes:
+        rows += 1
+
+    g = np.zeros((num_nodes, num_nodes), dtype=float)
+
+    def node_at(row: int, col: int) -> int | None:
+        node = row * cols + col
+        return node if node < num_nodes else None
+
+    for row in range(rows):
+        for col in range(cols):
+            node_i = node_at(row, col)
+            if node_i is None:
+                continue
+            for drow, dcol in ((1, 0), (0, 1)):
+                node_j = node_at(row + drow, col + dcol)
+                if node_j is None:
+                    continue
+                g[node_i, node_j] = edge_weight
+                g[node_j, node_i] = edge_weight
+
+    return g
+
+
 def create_grid_adjacency_matrix(rows, cols) -> NDArray[np.float64]:
     """
     Create adjacency matrix for a grid graph with wraparound connections.
@@ -1346,6 +1385,7 @@ def single_run_topology(
     json_pretty: bool = True,
     json_emit_full_matrices: bool = True,
     output_mode: str = "json",
+    enforce_generation_capacity: bool = True,
 ) -> SimulationInputConfig | None:
     valid_output_modes = {"json", "simulation-config", "json+simulation-config"}
     if output_mode not in valid_output_modes:
@@ -1363,9 +1403,14 @@ def single_run_topology(
             num_nodes, edge_weight=edge_weight
         )
         default_output_path = f"./output/lp/single_run_chain_n{num_nodes}_solution.json"
+    elif topology == "grid":
+        generation_graph = create_node_count_grid_adjacency_matrix(
+            num_nodes, edge_weight=edge_weight
+        )
+        default_output_path = f"./output/lp/single_run_grid_n{num_nodes}_solution.json"
     else:
         raise ValueError(
-            f"Unknown topology '{topology}'. Expected 'cycle' or 'chain'."
+            f"Unknown topology '{topology}'. Expected 'cycle', 'chain', or 'grid'."
         )
 
     if json_output_path is None:
@@ -1391,7 +1436,10 @@ def single_run_topology(
     )
 
     spec = LinearSpec(num_nodes)
-    spec.add_generate_constraints(generation_graph)
+    if enforce_generation_capacity:
+        spec.add_generate_constraints(generation_graph)
+    else:
+        spec.add_generate_zero_constraints(generation_graph)
     spec.add_consume_constraints(consumption_graph)
     spec.add_swap_capacity_constraints(np.full(num_nodes, float(swap_rate), dtype=float))
     result = spec.solve(objective=objective)
@@ -1412,6 +1460,7 @@ def single_run_topology(
                 "cons_max_edge_weight": float(cons_max_edge_weight),
                 "seed": None if seed is None else int(seed),
                 "objective": str(objective),
+                "enforce_generation_capacity": bool(enforce_generation_capacity),
             },
         },
         "solver": {
@@ -1582,6 +1631,7 @@ def single_run_cycle(
     json_pretty: bool = True,
     json_emit_full_matrices: bool = True,
     output_mode: str = "json",
+    enforce_generation_capacity: bool = True,
 ):
     return single_run_topology(
         topology="cycle",
@@ -1599,6 +1649,7 @@ def single_run_cycle(
         json_pretty=json_pretty,
         json_emit_full_matrices=json_emit_full_matrices,
         output_mode=output_mode,
+        enforce_generation_capacity=enforce_generation_capacity,
     )
 
 
@@ -1606,19 +1657,24 @@ def write_requested_lp_results(
     *,
     output_dir: str = "./output/lp_results",
     edge_weight: float = 10.0,
-    gen_scale: float = 10.0,
+    gen_scale: float = 1.0,
     cons_scale: float = 1.0,
     cons_edge_fraction: float = 0.2,
     cons_max_edge_weight: float = 7.0,
     objective: str = "min_sum_generate",
-    swap_rate: float = 10.0,
+    swap_rate: float = 100.0,
     output_mode: str = "json",
+    enforce_generation_capacity: bool = False,
 ) -> None:
     runs = [
-        {"topology": "cycle", "num_nodes": 10, "seed": 10},
-        {"topology": "cycle", "num_nodes": 15, "seed": 15},
+        {"topology": "grid", "num_nodes": 5, "seed": 5},
+        {"topology": "grid", "num_nodes": 10, "seed": 10},
+        {"topology": "grid", "num_nodes": 15, "seed": 15},
+        {"topology": "grid", "num_nodes": 20, "seed": 20},
         {"topology": "chain", "num_nodes": 5, "seed": 5},
-        {"topology": "chain", "num_nodes": 10, "seed": 20},
+        {"topology": "chain", "num_nodes": 10, "seed": 10},
+        {"topology": "chain", "num_nodes": 15, "seed": 15},
+        {"topology": "chain", "num_nodes": 20, "seed": 20},
     ]
 
     os.makedirs(output_dir, exist_ok=True)
@@ -1651,6 +1707,7 @@ def write_requested_lp_results(
             json_pretty=True,
             json_emit_full_matrices=True,
             output_mode=output_mode,
+            enforce_generation_capacity=enforce_generation_capacity,
         )
 
 
@@ -1680,11 +1737,12 @@ if __name__ == "__main__":
     write_requested_lp_results(
         output_dir="./output/lp_results",
         edge_weight=10.0,
-        gen_scale=10.0,
+        gen_scale=1.0,
         cons_scale=1.0,
         cons_edge_fraction=0.2,
         cons_max_edge_weight=7.0,
         objective="min_sum_generate",
-        swap_rate=10.0,
+        swap_rate=100.0,
         output_mode="json+simulation-config",
+        enforce_generation_capacity=False,
     )
