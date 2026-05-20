@@ -393,6 +393,8 @@ class QBPEventApplier:
             state.total_scarcity_count += 2
             if old_output_scarcity > 0:
                 state.total_scarcity_count -= 1
+        elif event.event_type == "virtual_swap_idle":
+            _require(event.i, "i")
         elif event.event_type == "physical_service":
             _apply_physical_service(state.q, state.h_r, _require(event.x, "x"), _require(event.y, "y"))
             state.services_completed += 1
@@ -469,6 +471,8 @@ class GillespieQBPEventProducer:
         self.physical_swap_node_rates = np.zeros(self.n_nodes, dtype=np.float64)
         self.active_physical_swap_total = 0.0
         self.rng = np.random.default_rng(seed)
+        policy_seed = None if seed is None else int(seed) + 1_000_003
+        self.policy_rng = np.random.default_rng(policy_seed)
 
     def _uses_limited_virtual_swap_policy(self) -> bool:
         return self.config.virtual_swap_policy.mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY
@@ -494,7 +498,7 @@ class GillespieQBPEventProducer:
         self.active_physical_swap_total = 0.0
         for node in range(self.n_nodes):
             if self._uses_limited_virtual_swap_policy():
-                self._refresh_limited_virtual_swap_node(state, node)
+                self._initialize_limited_virtual_swap_node(node)
             else:
                 self._recompute_virtual_swap_node(state, node)
             self._recompute_physical_swap_node(state, node)
@@ -532,6 +536,15 @@ class GillespieQBPEventProducer:
         self.virtual_swap_node_rates[node] = new_rate
         self.active_virtual_swap_total += new_rate - old_rate
 
+    def _initialize_limited_virtual_swap_node(self, node: int) -> None:
+        old_rate = float(self.virtual_swap_node_rates[node])
+        self.virtual_swap_best_weight[node] = 0
+        self.virtual_swap_best_idx[node] = -1
+        has_candidates = self.swap_node_starts[node] < self.swap_node_starts[node + 1]
+        new_rate = float(self.config.swap_rates[node]) if has_candidates else 0.0
+        self.virtual_swap_node_rates[node] = new_rate
+        self.active_virtual_swap_total += new_rate - old_rate
+
     def _virtual_swap_weight(self, state: QBPState, swap_idx: int) -> int:
         i = int(self.swap_i[swap_idx])
         y = int(self.swap_y[swap_idx])
@@ -549,7 +562,7 @@ class GillespieQBPEventProducer:
         if k >= count:
             return np.arange(start, stop, dtype=np.int64)
 
-        offsets = self.rng.choice(count, size=k, replace=False)
+        offsets = self.policy_rng.choice(count, size=k, replace=False)
         return np.asarray(offsets, dtype=np.int64) + start
 
     def _refresh_limited_virtual_swap_node(self, state: QBPState, node: int) -> None:
@@ -581,13 +594,10 @@ class GillespieQBPEventProducer:
 
         self.virtual_swap_best_weight[node] = best_weight
         self.virtual_swap_best_idx[node] = best_idx
-        new_rate = float(self.config.swap_rates[node]) if best_idx >= 0 else 0.0
+        has_candidates = self.swap_node_starts[node] < self.swap_node_starts[node + 1]
+        new_rate = float(self.config.swap_rates[node]) if has_candidates else 0.0
         self.virtual_swap_node_rates[node] = new_rate
         self.active_virtual_swap_total += new_rate - old_rate
-
-    def _refresh_limited_virtual_swap_nodes(self, state: QBPState) -> None:
-        for node in range(self.n_nodes):
-            self._refresh_limited_virtual_swap_node(state, node)
 
     def _recompute_physical_swap_node(self, state: QBPState, node: int) -> None:
         old_rate = float(self.physical_swap_node_rates[node])
@@ -661,6 +671,9 @@ class GillespieQBPEventProducer:
             self._update_virtual_swap_for_alpha_pair_change(state, y, z, -1)
             return
 
+        if event.event_type == "virtual_swap_idle":
+            return
+
         if event.event_type == "physical_service":
             x = _require(event.x, "x")
             y = _require(event.y, "y")
@@ -683,9 +696,6 @@ class GillespieQBPEventProducer:
             return
 
     def produce(self, state: QBPState, until_time: float | None = None) -> tuple[QBPEvent | None, bool]:
-        if self._uses_limited_virtual_swap_policy():
-            self._refresh_limited_virtual_swap_nodes(state)
-
         demand_total = self.demand_total
         generation_total = self.generation_total
         virtual_service_total = self.active_virtual_service_total
@@ -764,7 +774,22 @@ class GillespieQBPEventProducer:
         selector -= virtual_service_total
         if selector < virtual_swap_total:
             node = _sample_index(self.rng, self.virtual_swap_node_rates, virtual_swap_total)
+            if self._uses_limited_virtual_swap_policy():
+                self._refresh_limited_virtual_swap_node(state, node)
             idx = int(self.virtual_swap_best_idx[node])
+            if idx < 0:
+                return (
+                    QBPEvent(
+                        event_index=event_index,
+                        time=next_time,
+                        dt=dt,
+                        total_rate=total_rate,
+                        event_type="virtual_swap_idle",
+                        event_rate=float(self.virtual_swap_node_rates[node]),
+                        i=int(node),
+                    ),
+                    False,
+                )
             return (
                 QBPEvent(
                     event_index=event_index,

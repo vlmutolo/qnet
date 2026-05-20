@@ -487,6 +487,12 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Path for the full-info vs limited-info service_ratio plot.",
     )
+    limited_parser.add_argument(
+        "--plot-start-time",
+        type=float,
+        default=100.0,
+        help="Positive lower bound for the log-scaled simulation-time axis.",
+    )
     return parser
 
 
@@ -679,7 +685,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
         )
-        plot_limited_info_service_ratio_runs(runs, args.plot_out)
+        plot_limited_info_service_ratio_runs(runs, args.plot_out, plot_start_time=args.plot_start_time)
         print("Limited-info service-ratio experiment")
         for run in runs:
             summary = run.summary

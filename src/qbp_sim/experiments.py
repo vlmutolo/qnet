@@ -488,44 +488,46 @@ def plot_generation_multiplier_runs(
 def plot_limited_info_service_ratio_runs(
     runs: list[LimitedInfoServiceRatioRun],
     output_path: str | Path,
+    *,
+    plot_start_time: float = 100.0,
 ) -> None:
     if not runs:
         raise ValueError("No limited-info service-ratio runs were provided.")
+    if plot_start_time <= 0.0:
+        raise ValueError("plot_start_time must be positive for the log-scaled time axis.")
 
     rows: list[dict[str, float | int | str]] = []
     series_order = [run.policy_label for run in runs]
     for order, run in enumerate(runs):
-        rows.append(
-            {
-                "series": run.policy_label,
-                "series_order": order,
-                "policy_mode": run.policy_mode,
-                "time": 0.0,
-                "event_index": 0,
-                "service_ratio": 0.0,
-                "demand_arrivals": 0,
-                "services_completed": 0,
-            }
-        )
         for snapshot in run.snapshots:
+            if snapshot.time < plot_start_time:
+                continue
             rows.append(
                 {
                     "series": run.policy_label,
                     "series_order": order,
                     "policy_mode": run.policy_mode,
                     "time": snapshot.time,
+                    "plot_time": snapshot.time,
                     "event_index": snapshot.event_index,
                     "service_ratio": snapshot.service_ratio,
                     "demand_arrivals": snapshot.demand_arrivals,
                     "services_completed": snapshot.services_completed,
                 }
             )
+    if not rows:
+        raise ValueError(f"No snapshots at or after plot_start_time={plot_start_time}.")
+    max_plot_time = max(float(row["plot_time"]) for row in rows)
 
     chart = (
         alt.Chart(alt.Data(values=rows))
         .mark_line(strokeWidth=2.3)
         .encode(
-            x=alt.X("time:Q", title="simulation time since t=0", scale=alt.Scale(zero=True)),
+            x=alt.X(
+                "plot_time:Q",
+                title="simulation time since t=0 (log scale)",
+                scale=alt.Scale(type="log", domain=[plot_start_time, max_plot_time]),
+            ),
             y=alt.Y(
                 "service_ratio:Q",
                 title="service_ratio = services_completed / demand_arrivals",
@@ -545,7 +547,7 @@ def plot_limited_info_service_ratio_runs(
         .properties(
             width=900,
             height=500,
-            title=f"Limited-info vs full-info BP service ratio from t=0 on cycle n={runs[0].n_nodes}",
+            title=f"Limited-info vs full-info BP service ratio from t={plot_start_time:g} on cycle n={runs[0].n_nodes}",
         )
     )
     save_chart(chart, output_path)

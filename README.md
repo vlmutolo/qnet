@@ -148,7 +148,7 @@ Compare full-information and limited-information policies on an LP-derived cycle
 `service_ratio = services_completed / demand_arrivals` from `t=0`:
 
 ```bash
-uv run qbp-sim limited-info-service-ratio --n 5 --until 1000 --limited-policies 1:1 2:2 4:4
+uv run qbp-sim limited-info-service-ratio --n 5 --until 1000 --limited-policies 1:1 2:2 4:4 --plot-start-time 100
 ```
 
 Write a compressed event trace:

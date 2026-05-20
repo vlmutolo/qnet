@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import os
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
@@ -228,20 +229,32 @@ def test_limited_information_policy_matches_global_when_it_samples_every_candida
 
     global_sim = GillespieQBPSimulator(global_config, seed=41, initial_alpha=initial_alpha)
     limited_sim = GillespieQBPSimulator(limited_config, seed=41, initial_alpha=initial_alpha)
+    limited_sim.producer._refresh_limited_virtual_swap_node(limited_sim.state, 0)
 
     assert limited_sim.producer.virtual_swap_memory_idx.shape == (4, 3)
     assert limited_sim.producer.virtual_swap_best_idx[0] == global_sim.producer.virtual_swap_best_idx[0]
     assert limited_sim.producer.virtual_swap_best_weight[0] == global_sim.producer.virtual_swap_best_weight[0]
 
 
-def test_limited_information_policy_matches_global_event_trace_when_every_candidate_is_available() -> None:
-    global_config = build_four_node_counterexample()
-    all_candidates_config = replace(global_config, virtual_swap_policy=_limited_policy(k=3, memory=3))
+def test_limited_information_all_candidate_refresh_matches_global_best_on_shared_state() -> None:
+    global_sim = GillespieQBPSimulator(build_four_node_counterexample(), seed=53)
+    for _ in range(100):
+        assert global_sim.step(until_time=20.0) is not None
 
-    global_records = _collect_event_records(GillespieQBPSimulator(global_config, seed=53), 200)
-    limited_records = _collect_event_records(GillespieQBPSimulator(all_candidates_config, seed=53), 200)
-
-    assert limited_records == global_records
+    limited_config = replace(global_sim.config, virtual_swap_policy=_limited_policy(k=3, memory=3))
+    limited_sim = GillespieQBPSimulator(
+        limited_config,
+        seed=53,
+        initial_q=global_sim.state.q,
+        initial_d=global_sim.state.d,
+        initial_alpha=global_sim.state.alpha,
+        initial_h_r=global_sim.state.h_r,
+        initial_h_mu=global_sim.state.h_mu,
+    )
+    for node in range(limited_sim.n_nodes):
+        limited_sim.producer._refresh_limited_virtual_swap_node(limited_sim.state, node)
+        assert limited_sim.producer.virtual_swap_best_idx[node] == global_sim.producer.virtual_swap_best_idx[node]
+        assert limited_sim.producer.virtual_swap_best_weight[node] == global_sim.producer.virtual_swap_best_weight[node]
 
 
 def test_limited_information_policy_bounds_candidate_score_reads(monkeypatch) -> None:
@@ -265,6 +278,19 @@ def test_limited_information_policy_bounds_candidate_score_reads(monkeypatch) ->
 
     assert sum(counts.values()) > 0
     assert all(count <= 5 for count in counts.values())
+
+
+def test_limited_information_candidate_sampling_uses_independent_rng() -> None:
+    config = replace(build_four_node_counterexample(), virtual_swap_policy=_limited_policy(k=1, memory=1))
+    sim = GillespieQBPSimulator(config, seed=60)
+
+    event_rng_state = deepcopy(sim.producer.rng.bit_generator.state)
+    policy_rng_state = deepcopy(sim.producer.policy_rng.bit_generator.state)
+
+    sim.producer._sample_limited_virtual_swap_candidates(1)
+
+    assert sim.producer.rng.bit_generator.state == event_rng_state
+    assert sim.producer.policy_rng.bit_generator.state != policy_rng_state
 
 
 def test_limited_information_memory_keeps_best_sampled_candidates_not_global_best(monkeypatch) -> None:
@@ -339,52 +365,51 @@ def test_limited_information_memory_rescores_stale_candidates(monkeypatch) -> No
     assert producer.virtual_swap_memory_idx[0, 0] == candidate
     assert producer.virtual_swap_memory_weight[0, 0] < 0
     assert producer.virtual_swap_best_idx[0] == -1
-    assert producer.virtual_swap_node_rates[0] == 0.0
+    assert producer.virtual_swap_node_rates[0] == 1.0
 
 
-def test_limited_information_virtual_swap_events_are_valid_and_apply_expected_state_changes() -> None:
-    config = replace(build_four_node_counterexample(), virtual_swap_policy=_limited_policy(k=2, memory=2))
-    sim = GillespieQBPSimulator(config, seed=71)
-    virtual_swaps_seen = 0
+def test_limited_information_virtual_swap_event_is_valid_and_applies_expected_state_changes() -> None:
+    initial_alpha = np.zeros((4, 4), dtype=np.int64)
+    initial_alpha[2, 3] = initial_alpha[3, 2] = 5
+    config = replace(
+        GillespieQBPConfig(
+            generation_rates=np.zeros((4, 4), dtype=np.float64),
+            demand_rates=np.zeros((4, 4), dtype=np.float64),
+            swap_rates=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+            service_rates=np.zeros((4, 4), dtype=np.float64),
+        ),
+        virtual_swap_policy=_limited_policy(k=3, memory=3),
+    )
+    sim = GillespieQBPSimulator(config, seed=71, initial_alpha=initial_alpha)
+    event = sim.produce_next_event(until_time=20.0)
+    assert event is not None
+    assert event.event_type == "virtual_swap"
+    assert event.swap_idx is not None and event.swap_idx >= 0
+    assert event.i == int(sim.swap_i[event.swap_idx])
+    assert event.y == int(sim.swap_y[event.swap_idx])
+    assert event.z == int(sim.swap_z[event.swap_idx])
+    assert event.event_rate > 0.0
 
-    for _ in range(500):
-        event = sim.produce_next_event(until_time=20.0)
-        if event is None:
-            break
+    i = int(event.i)
+    y = int(event.y)
+    z = int(event.z)
+    idx = int(event.swap_idx)
+    old_h_mu = int(sim.state.h_mu[idx])
+    old_alpha_iy = int(sim.state.alpha[i, y])
+    old_alpha_iz = int(sim.state.alpha[i, z])
+    old_alpha_yz = int(sim.state.alpha[y, z])
+    old_swap_requests = sim.state.virtual_swap_requests
+    old_swap_deficit = sim.state.total_swap_deficit
 
-        if event.event_type == "virtual_swap":
-            virtual_swaps_seen += 1
-            assert event.swap_idx is not None and event.swap_idx >= 0
-            assert event.i == int(sim.swap_i[event.swap_idx])
-            assert event.y == int(sim.swap_y[event.swap_idx])
-            assert event.z == int(sim.swap_z[event.swap_idx])
-            assert event.event_rate > 0.0
+    sim.apply_event(event)
 
-            i = int(event.i)
-            y = int(event.y)
-            z = int(event.z)
-            idx = int(event.swap_idx)
-            old_h_mu = int(sim.state.h_mu[idx])
-            old_alpha_iy = int(sim.state.alpha[i, y])
-            old_alpha_iz = int(sim.state.alpha[i, z])
-            old_alpha_yz = int(sim.state.alpha[y, z])
-            old_swap_requests = sim.state.virtual_swap_requests
-            old_swap_deficit = sim.state.total_swap_deficit
-
-            sim.apply_event(event)
-
-            assert sim.state.h_mu[idx] == old_h_mu + 1
-            assert sim.state.alpha[i, y] == old_alpha_iy + 1
-            assert sim.state.alpha[i, z] == old_alpha_iz + 1
-            assert sim.state.alpha[y, z] == max(old_alpha_yz - 1, 0)
-            assert sim.state.virtual_swap_requests == old_swap_requests + 1
-            assert sim.state.total_swap_deficit == old_swap_deficit + 1
-        else:
-            sim.apply_event(event)
-
-        _assert_state_invariants(sim)
-
-    assert virtual_swaps_seen > 0
+    assert sim.state.h_mu[idx] == old_h_mu + 1
+    assert sim.state.alpha[i, y] == old_alpha_iy + 1
+    assert sim.state.alpha[i, z] == old_alpha_iz + 1
+    assert sim.state.alpha[y, z] == max(old_alpha_yz - 1, 0)
+    assert sim.state.virtual_swap_requests == old_swap_requests + 1
+    assert sim.state.total_swap_deficit == old_swap_deficit + 1
+    _assert_state_invariants(sim)
 
 
 @pytest.mark.gated
@@ -595,9 +620,9 @@ def test_limited_info_service_ratio_experiment_writes_snapshots_and_plot(tmp_pat
         n_nodes=4,
         limited_policies=[(1, 1)],
         output_dir=tmp_path / "limited-info",
-        until_time=2.0,
-        max_events=1_000,
-        sample_every=1,
+        until_time=200.0,
+        max_events=100_000,
+        sample_every=100,
         seed_base=3,
         progress=False,
     )
