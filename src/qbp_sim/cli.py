@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from qbp_sim.analysis import plot_snapshot_metric, summarize_snapshots
@@ -9,12 +10,88 @@ from qbp_sim.examples import build_four_node_counterexample
 from qbp_sim.experiments import (
     plot_cycle_service_ratio_runs,
     plot_generation_multiplier_runs,
+    plot_limited_info_service_ratio_runs,
     run_cycle_service_ratio_experiment,
     run_generation_multiplier_experiment,
+    run_limited_info_service_ratio_experiment,
 )
-from qbp_sim.simulator import GillespieQBPSimulator, replay_event_stream
+from qbp_sim.simulator import (
+    VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+    GillespieQBPConfig,
+    GillespieQBPSimulator,
+    VirtualSwapPolicy,
+    replay_event_stream,
+)
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 from qbp_sim.trace import EventTraceReader, EventTraceWriter
+
+
+def _add_virtual_swap_policy_args(command_parser: argparse.ArgumentParser) -> None:
+    command_parser.add_argument(
+        "--virtual-swap-policy",
+        choices=[
+            VIRTUAL_SWAP_POLICY_GLOBAL,
+            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            "power-of-k-memory",
+        ],
+        default=None,
+        help="Override the virtual swap scheduler policy.",
+    )
+    command_parser.add_argument(
+        "--swap-k",
+        type=int,
+        default=None,
+        help="Fresh candidate swaps queried per actor refresh for power_of_k_memory.",
+    )
+    command_parser.add_argument(
+        "--swap-memory",
+        type=int,
+        default=None,
+        help="Best candidate swaps remembered per actor for power_of_k_memory.",
+    )
+
+
+def _normalize_virtual_swap_policy_mode(mode: str) -> str:
+    return mode.replace("-", "_")
+
+
+def _apply_virtual_swap_policy_args(config: GillespieQBPConfig, args: argparse.Namespace) -> GillespieQBPConfig:
+    requested_mode = args.virtual_swap_policy
+    requested_k = args.swap_k
+    requested_memory = args.swap_memory
+    if requested_mode is None and requested_k is None and requested_memory is None:
+        return config
+
+    mode = (
+        _normalize_virtual_swap_policy_mode(requested_mode)
+        if requested_mode is not None
+        else VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY
+    )
+    current = config.virtual_swap_policy
+    return replace(
+        config,
+        virtual_swap_policy=VirtualSwapPolicy(
+            mode=mode,
+            k=current.k if requested_k is None else requested_k,
+            memory=current.memory if requested_memory is None else requested_memory,
+        ),
+    )
+
+
+def _parse_limited_policy(value: str) -> tuple[int, int]:
+    normalized = value.lower().replace("x", ":").replace(",", ":")
+    parts = normalized.split(":")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("limited policy must be formatted as K:M, for example 4:8.")
+    try:
+        k = int(parts[0])
+        memory = int(parts[1])
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("limited policy K and M must be integers.") from exc
+    if k <= 0 or memory <= 0:
+        raise argparse.ArgumentTypeError("limited policy K and M must be positive.")
+    return k, memory
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -63,6 +140,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Write sampled aggregate snapshots into a Zstandard-compressed JSONL file.",
     )
+    _add_virtual_swap_policy_args(run_parser)
 
     example_parser = subparsers.add_parser(
         "example",
@@ -96,6 +174,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Write sampled aggregate snapshots into a Zstandard-compressed JSONL file.",
     )
+    _add_virtual_swap_policy_args(example_parser)
 
     replay_parser = subparsers.add_parser(
         "replay",
@@ -324,6 +403,90 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Path for the combined Altair-rendered plot.",
     )
+
+    limited_parser = subparsers.add_parser(
+        "limited-info-service-ratio",
+        help="Compare full-info BP against limited-info power-of-k-memory policies using service_ratio from t=0.",
+    )
+    limited_parser.add_argument(
+        "--n",
+        type=int,
+        default=5,
+        help="Cycle size to generate, solve, and simulate.",
+    )
+    limited_parser.add_argument(
+        "--limited-policies",
+        type=_parse_limited_policy,
+        nargs="+",
+        default=[(1, 1), (2, 2), (4, 4)],
+        metavar="K:M",
+        help="Limited-info policies to compare, formatted as K:M. Example: --limited-policies 1:1 2:2 4:8",
+    )
+    limited_parser.add_argument(
+        "--until",
+        type=float,
+        default=1_000.0,
+        help="Stop each simulation at this simulation time. Measurements start at t=0.",
+    )
+    limited_parser.add_argument(
+        "--max-events",
+        type=int,
+        default=1_000_000,
+        help="Stop each simulation after this many events if it has not reached --until.",
+    )
+    limited_parser.add_argument(
+        "--sample-every",
+        type=int,
+        default=1_000,
+        help="Record a snapshot every N events for plotting.",
+    )
+    limited_parser.add_argument(
+        "--seed-base",
+        type=int,
+        default=0,
+        help="Base seed for the LP and each BP run.",
+    )
+    limited_parser.add_argument(
+        "--gen-scale",
+        type=float,
+        default=10.0,
+        help="Scale factor applied to cycle-edge generation capacities before solving the LP.",
+    )
+    limited_parser.add_argument(
+        "--cons-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to sampled consumption demands before solving the LP.",
+    )
+    limited_parser.add_argument(
+        "--cons-edge-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Override the fraction of end-to-end consumption pairs given nonzero demand. "
+            "By default the experiment uses a size-aware rule with about n/2 active demand pairs."
+        ),
+    )
+    limited_parser.add_argument(
+        "--swap-rate",
+        type=float,
+        default=100.0,
+        help="Uniform per-node swap cap used in the LP instance.",
+    )
+    limited_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output/limited_info_service_ratio"),
+        metavar="OUTDIR",
+        help="Directory to write LP outputs, policy configs, and snapshots.",
+    )
+    limited_parser.add_argument(
+        "--plot-out",
+        type=Path,
+        default=Path("output/plots/limited_info_service_ratio.png"),
+        metavar="OUTFILE",
+        help="Path for the full-info vs limited-info service_ratio plot.",
+    )
     return parser
 
 
@@ -333,7 +496,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "run":
         input_config = load_simulation_config(args.config)
-        sim = GillespieQBPSimulator(config=input_config.to_runtime_config(), seed=args.seed)
+        config = _apply_virtual_swap_policy_args(input_config.to_runtime_config(), args)
+        sim = GillespieQBPSimulator(config=config, seed=args.seed)
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=args.max_events, sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
@@ -373,7 +537,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
     if args.command == "example":
-        config = build_four_node_counterexample()
+        config = _apply_virtual_swap_policy_args(build_four_node_counterexample(), args)
         sim = GillespieQBPSimulator(config=config, seed=args.seed)
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=args.max_events, sample_every=args.sample_every)
@@ -496,6 +660,31 @@ def main(argv: list[str] | None = None) -> None:
             summary = run.summary
             print(
                 f"n={run.n_nodes} generation_multiplier={run.generation_multiplier:g} "
+                f"final_time={summary.final_time:.3f} "
+                f"final_service_ratio={summary.final_service_ratio:.6f} "
+                f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
+            )
+        print(f"\nWrote plot to {args.plot_out}")
+    if args.command == "limited-info-service-ratio":
+        runs = run_limited_info_service_ratio_experiment(
+            n_nodes=args.n,
+            limited_policies=args.limited_policies,
+            output_dir=args.output_dir,
+            until_time=args.until,
+            max_events=args.max_events,
+            sample_every=args.sample_every,
+            seed_base=args.seed_base,
+            gen_scale=args.gen_scale,
+            cons_scale=args.cons_scale,
+            cons_edge_fraction=args.cons_edge_fraction,
+            swap_rate=args.swap_rate,
+        )
+        plot_limited_info_service_ratio_runs(runs, args.plot_out)
+        print("Limited-info service-ratio experiment")
+        for run in runs:
+            summary = run.summary
+            print(
+                f"n={run.n_nodes} policy={run.policy_label} "
                 f"final_time={summary.final_time:.3f} "
                 f"final_service_ratio={summary.final_service_ratio:.6f} "
                 f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"

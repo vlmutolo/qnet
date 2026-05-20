@@ -29,6 +29,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gated: higher-level stochastic simulator checks skipped unless QBP_SIM_RUN_GATED_TESTS=1",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.16,<0.10.0"]

@@ -55,6 +55,26 @@ JSON simulation input is validated with Pydantic and currently only needs:
 - `consumption_rates`
 - `swap_rates`
 
+It may also include an optional virtual swap scheduler policy:
+
+```json
+{
+  "virtual_swap_policy": {
+    "mode": "power_of_k_memory",
+    "k": 4,
+    "memory": 8
+  }
+}
+```
+
+The default policy is `global`, which preserves the original backpressure behavior: each node
+scans every swap candidate and picks the largest positive virtual pressure. The
+`power_of_k_memory` policy is a limited-information variant. On each actor refresh, a node
+samples `k` fresh swap candidates, re-scores its remembered candidates, keeps the best `memory`
+candidates it has seen, and exposes only the best positive remembered candidate to the virtual
+swap clock. The centralized simulator still stores dense matrices, but this policy constrains
+which entries the simulated actor is allowed to inspect while choosing swaps.
+
 The runtime topology is inferred from `generation_rates > 0`, and service hazards default to the
 requested `consumption_rates` on each demanded pair.
 
@@ -116,6 +136,19 @@ Run from a JSON config:
 
 ```bash
 uv run qbp-sim run --config configs/run-001.json --until 100
+```
+
+Run the built-in example with the limited-information virtual swap policy:
+
+```bash
+uv run qbp-sim example --until 100 --virtual-swap-policy power-of-k-memory --swap-k 4 --swap-memory 8
+```
+
+Compare full-information and limited-information policies on an LP-derived cycle and plot
+`service_ratio = services_completed / demand_arrivals` from `t=0`:
+
+```bash
+uv run qbp-sim limited-info-service-ratio --n 5 --until 1000 --limited-policies 1:1 2:2 4:4
 ```
 
 Write a compressed event trace:

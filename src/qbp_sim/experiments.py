@@ -9,7 +9,7 @@ import altair as alt
 import numpy as np
 
 from qbp_sim.analysis import save_chart, summarize_snapshots
-from qbp_sim.config import SimulationInputConfig
+from qbp_sim.config import SimulationInputConfig, VirtualSwapPolicyConfig
 from qbp_sim.simulator import GillespieQBPSimulator
 from qbp_sim.snapshots import QBPSnapshot, SnapshotReader, SnapshotWriter
 
@@ -31,6 +31,23 @@ class CycleServiceRatioRun:
 class GenerationMultiplierRun:
     n_nodes: int
     generation_multiplier: float
+    lp_json_path: Path
+    simulation_config_path: Path
+    snapshots_path: Path
+    snapshots: list[QBPSnapshot]
+
+    @property
+    def summary(self):
+        return summarize_snapshots(self.snapshots)
+
+
+@dataclass(slots=True)
+class LimitedInfoServiceRatioRun:
+    n_nodes: int
+    policy_label: str
+    policy_mode: str
+    k: int | None
+    memory: int | None
     lp_json_path: Path
     simulation_config_path: Path
     snapshots_path: Path
@@ -66,12 +83,127 @@ def _generation_multiplier_slug(multiplier: float) -> str:
     return f"{multiplier:.6f}".rstrip("0").rstrip(".").replace(".", "p")
 
 
+def _policy_slug(policy_label: str) -> str:
+    return (
+        policy_label.lower()
+        .replace(" ", "_")
+        .replace("=", "")
+        .replace(",", "")
+        .replace("/", "_")
+    )
+
+
 def _scale_generation_rates(
     simulation_input: SimulationInputConfig,
     multiplier: float,
 ) -> SimulationInputConfig:
     scaled_generation = np.asarray(simulation_input.generation_rates, dtype=np.float64) * float(multiplier)
     return simulation_input.model_copy(update={"generation_rates": scaled_generation.tolist()})
+
+
+def run_limited_info_service_ratio_experiment(
+    *,
+    n_nodes: int,
+    limited_policies: list[tuple[int, int]],
+    output_dir: str | Path,
+    until_time: float,
+    max_events: int,
+    sample_every: int,
+    seed_base: int = 0,
+    edge_weight: float = 10.0,
+    gen_scale: float = 10.0,
+    cons_scale: float = 1.0,
+    cons_edge_fraction: float | None = None,
+    cons_max_edge_weight: float = 7.0,
+    objective: str = "min_sum_generate",
+    swap_rate: float = 100.0,
+    progress: bool | None = None,
+) -> list[LimitedInfoServiceRatioRun]:
+    if sample_every <= 0:
+        raise ValueError("sample_every must be positive for limited-info service-ratio experiments.")
+    if not limited_policies:
+        raise ValueError("limited_policies must not be empty.")
+
+    base_dir = Path(output_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    linear_module = _load_linear_module()
+    lp_json_path = base_dir / "lp_solution.json"
+    base_simulation_config_path = base_dir / "base_simulation_config.json"
+    run_seed = seed_base + n_nodes
+    run_cons_edge_fraction = _cycle_consumption_edge_fraction(n_nodes, cons_edge_fraction)
+
+    base_simulation_input = linear_module.single_run_topology(
+        topology="cycle",
+        num_nodes=n_nodes,
+        edge_weight=edge_weight,
+        gen_scale=gen_scale,
+        cons_scale=cons_scale,
+        cons_edge_fraction=run_cons_edge_fraction,
+        cons_max_edge_weight=cons_max_edge_weight,
+        seed=run_seed,
+        objective=objective,
+        swap_rate=swap_rate,
+        json_output_path=str(lp_json_path),
+        simulation_config_output_path=str(base_simulation_config_path),
+        json_pretty=True,
+        json_emit_full_matrices=True,
+        output_mode="json+simulation-config",
+    )
+    if base_simulation_input is None:
+        raise RuntimeError(f"LP solve failed for cycle n={n_nodes}.")
+
+    variants: list[tuple[str, str, int | None, int | None, SimulationInputConfig]] = [
+        ("full info", "global", None, None, base_simulation_input)
+    ]
+    for k, memory in limited_policies:
+        if k <= 0 or memory <= 0:
+            raise ValueError("limited policy k and memory must be positive.")
+        policy = VirtualSwapPolicyConfig(mode="power_of_k_memory", k=k, memory=memory)
+        variants.append(
+            (
+                f"limited k={k}, m={memory}",
+                "power_of_k_memory",
+                k,
+                memory,
+                base_simulation_input.model_copy(update={"virtual_swap_policy": policy}),
+            )
+        )
+
+    runs: list[LimitedInfoServiceRatioRun] = []
+    for policy_label, policy_mode, k, memory, simulation_input in variants:
+        case_dir = base_dir / _policy_slug(policy_label)
+        case_dir.mkdir(parents=True, exist_ok=True)
+        simulation_config_path = case_dir / "simulation_config.json"
+        snapshots_path = case_dir / "snapshots.jsonl.zst"
+        simulation_config_path.write_text(simulation_input.model_dump_json(indent=2), encoding="utf-8")
+
+        simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
+        with SnapshotWriter(snapshots_path) as snapshot_writer:
+            simulator.run(
+                until_time=until_time,
+                max_events=max_events,
+                sample_every=sample_every,
+                snapshot_writer=snapshot_writer,
+                progress=progress,
+            )
+        with SnapshotReader(snapshots_path) as snapshot_reader:
+            snapshots = list(snapshot_reader)
+
+        runs.append(
+            LimitedInfoServiceRatioRun(
+                n_nodes=n_nodes,
+                policy_label=policy_label,
+                policy_mode=policy_mode,
+                k=k,
+                memory=memory,
+                lp_json_path=lp_json_path,
+                simulation_config_path=simulation_config_path,
+                snapshots_path=snapshots_path,
+                snapshots=snapshots,
+            )
+        )
+
+    return runs
 
 
 def run_cycle_service_ratio_experiment(
@@ -348,6 +480,72 @@ def plot_generation_multiplier_runs(
             width=860,
             height=480,
             title=f"BP service-gap decay on LP-derived cycle n={ordered_runs[0].n_nodes} with scaled generation (log-log)",
+        )
+    )
+    save_chart(chart, output_path)
+
+
+def plot_limited_info_service_ratio_runs(
+    runs: list[LimitedInfoServiceRatioRun],
+    output_path: str | Path,
+) -> None:
+    if not runs:
+        raise ValueError("No limited-info service-ratio runs were provided.")
+
+    rows: list[dict[str, float | int | str]] = []
+    series_order = [run.policy_label for run in runs]
+    for order, run in enumerate(runs):
+        rows.append(
+            {
+                "series": run.policy_label,
+                "series_order": order,
+                "policy_mode": run.policy_mode,
+                "time": 0.0,
+                "event_index": 0,
+                "service_ratio": 0.0,
+                "demand_arrivals": 0,
+                "services_completed": 0,
+            }
+        )
+        for snapshot in run.snapshots:
+            rows.append(
+                {
+                    "series": run.policy_label,
+                    "series_order": order,
+                    "policy_mode": run.policy_mode,
+                    "time": snapshot.time,
+                    "event_index": snapshot.event_index,
+                    "service_ratio": snapshot.service_ratio,
+                    "demand_arrivals": snapshot.demand_arrivals,
+                    "services_completed": snapshot.services_completed,
+                }
+            )
+
+    chart = (
+        alt.Chart(alt.Data(values=rows))
+        .mark_line(strokeWidth=2.3)
+        .encode(
+            x=alt.X("time:Q", title="simulation time since t=0", scale=alt.Scale(zero=True)),
+            y=alt.Y(
+                "service_ratio:Q",
+                title="service_ratio = services_completed / demand_arrivals",
+                scale=alt.Scale(domain=[0.0, 1.0]),
+            ),
+            color=alt.Color("series:N", title="policy", sort=series_order),
+            detail="series:N",
+            tooltip=[
+                alt.Tooltip("series:N", title="policy"),
+                alt.Tooltip("time:Q", format=".3f"),
+                alt.Tooltip("service_ratio:Q", format=".4f"),
+                alt.Tooltip("demand_arrivals:Q"),
+                alt.Tooltip("services_completed:Q"),
+                alt.Tooltip("event_index:Q"),
+            ],
+        )
+        .properties(
+            width=900,
+            height=500,
+            title=f"Limited-info vs full-info BP service ratio from t=0 on cycle n={runs[0].n_nodes}",
         )
     )
     save_chart(chart, output_path)

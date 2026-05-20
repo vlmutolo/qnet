@@ -2,18 +2,89 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.examples import build_four_node_counterexample
-from qbp_sim.experiments import _cycle_consumption_edge_fraction, _scale_generation_rates
+from qbp_sim.experiments import (
+    _cycle_consumption_edge_fraction,
+    _scale_generation_rates,
+    plot_limited_info_service_ratio_runs,
+    run_limited_info_service_ratio_experiment,
+)
 from qbp_sim.analysis import plot_snapshot_metric, plot_snapshot_metric_series, summarize_snapshots
 from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
-from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator, replay_event_stream
+import qbp_sim.simulator as simulator_module
+from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator, VirtualSwapPolicy, replay_event_stream
 from qbp_sim.trace import EventTraceReader, EventTraceWriter
+
+
+RUN_GATED_TESTS = os.environ.get("QBP_SIM_RUN_GATED_TESTS") == "1"
+gated_test = pytest.mark.skipif(
+    not RUN_GATED_TESTS,
+    reason="set QBP_SIM_RUN_GATED_TESTS=1 to run gated stochastic simulator checks",
+)
+
+
+def _limited_policy(k: int, memory: int) -> VirtualSwapPolicy:
+    return VirtualSwapPolicy(mode="power_of_k_memory", k=k, memory=memory)
+
+
+def _collect_event_records(sim: GillespieQBPSimulator, count: int) -> list[dict[str, int | float | str]]:
+    records: list[dict[str, int | float | str]] = []
+    for _ in range(count):
+        event = sim.step()
+        if event is None:
+            break
+        records.append(event.to_dict())
+    return records
+
+
+def _upper_triangle_sum(matrix: np.ndarray) -> int:
+    return int(np.triu(matrix, k=1).sum())
+
+
+def _assert_state_invariants(sim: GillespieQBPSimulator) -> None:
+    state = sim.state
+    for matrix in (state.q, state.d, state.alpha, state.h_r):
+        assert np.array_equal(matrix, matrix.T)
+        assert np.all(np.diag(matrix) == 0)
+        assert np.all(matrix >= 0)
+    assert np.all(state.h_mu >= 0)
+    assert state.total_inventory == _upper_triangle_sum(state.q)
+    assert state.total_virtual_backlog == _upper_triangle_sum(state.d)
+    assert state.total_scarcity == _upper_triangle_sum(state.alpha)
+    assert state.total_service_deficit == _upper_triangle_sum(state.h_r)
+    assert state.total_swap_deficit == int(state.h_mu.sum())
+    assert state.total_backlog == state.total_virtual_backlog + state.total_service_deficit
+    if state.demand_arrivals > 0:
+        assert np.isclose(state.service_ratio, state.services_completed / state.demand_arrivals)
+        assert 0.0 <= state.service_ratio <= 1.0
+
+
+def _cycle_runtime_config(num_nodes: int, seed: int, tmp_path: Path) -> GillespieQBPConfig:
+    linear_path = Path(__file__).resolve().parents[1] / "linear.py"
+    spec = importlib.util.spec_from_file_location(f"linear_module_cycle_{num_nodes}_{seed}", linear_path)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    config_path = tmp_path / f"cycle{num_nodes}_lp_config.json"
+    module.single_run_topology(
+        topology="cycle",
+        num_nodes=num_nodes,
+        seed=seed,
+        output_mode="simulation-config",
+        simulation_config_output_path=str(config_path),
+    )
+    return SimulationInputConfig.from_json_file(config_path).to_runtime_config()
 
 
 def test_service_event_consumes_inventory_and_backlog() -> None:
@@ -82,6 +153,316 @@ def test_four_node_example_builds_and_runs() -> None:
 
     assert result.events_processed > 0
     assert result.demand_arrivals > 0
+
+
+def test_default_virtual_swap_policy_matches_explicit_global_policy() -> None:
+    default_config = build_four_node_counterexample()
+    explicit_global_config = replace(default_config, virtual_swap_policy=VirtualSwapPolicy(mode="global"))
+
+    default_records = _collect_event_records(GillespieQBPSimulator(default_config, seed=47), 200)
+    explicit_global_records = _collect_event_records(GillespieQBPSimulator(explicit_global_config, seed=47), 200)
+
+    assert explicit_global_records == default_records
+
+
+def test_limited_information_virtual_swap_policy_builds_and_runs() -> None:
+    config = replace(
+        build_four_node_counterexample(),
+        virtual_swap_policy=_limited_policy(k=2, memory=2),
+    )
+    sim = GillespieQBPSimulator(config, seed=31)
+
+    result = sim.run(until_time=2.0, max_events=2_000, sample_every=100, progress=False)
+
+    assert result.events_processed > 0
+    assert result.demand_arrivals > 0
+
+
+def test_limited_information_replay_reproduces_summary_from_trace(tmp_path) -> None:
+    config = replace(
+        build_four_node_counterexample(),
+        virtual_swap_policy=_limited_policy(k=2, memory=2),
+    )
+    trace_path = tmp_path / "limited-replay.jsonl.zst"
+    sim = GillespieQBPSimulator(config, seed=37)
+
+    with EventTraceWriter(trace_path) as trace_writer:
+        original = sim.run(until_time=2.0, max_events=400, sample_every=25, trace_writer=trace_writer)
+
+    with EventTraceReader(trace_path) as trace_reader:
+        replayed = replay_event_stream(
+            config=config,
+            events=trace_reader,
+            sample_every=25,
+            final_time=original.final_time,
+        )
+
+    assert replayed.final_time == original.final_time
+    assert replayed.events_processed == original.events_processed
+    assert replayed.total_backlog == original.total_backlog
+    assert replayed.total_inventory == original.total_inventory
+    assert replayed.total_scarcity == original.total_scarcity
+    assert replayed.virtual_swap_requests == original.virtual_swap_requests
+    assert replayed.swaps_completed == original.swaps_completed
+
+
+def test_limited_information_policy_matches_global_when_it_samples_every_candidate() -> None:
+    generation_rates = np.zeros((4, 4), dtype=np.float64)
+    demand_rates = np.zeros((4, 4), dtype=np.float64)
+    service_rates = np.zeros((4, 4), dtype=np.float64)
+    swap_rates = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+    initial_alpha = np.zeros((4, 4), dtype=np.int64)
+    initial_alpha[2, 3] = 9
+    initial_alpha[3, 2] = 9
+
+    global_config = GillespieQBPConfig(
+        generation_rates=generation_rates,
+        demand_rates=demand_rates,
+        swap_rates=swap_rates,
+        service_rates=service_rates,
+    )
+    limited_config = replace(
+        global_config,
+        virtual_swap_policy=_limited_policy(k=3, memory=3),
+    )
+
+    global_sim = GillespieQBPSimulator(global_config, seed=41, initial_alpha=initial_alpha)
+    limited_sim = GillespieQBPSimulator(limited_config, seed=41, initial_alpha=initial_alpha)
+
+    assert limited_sim.producer.virtual_swap_memory_idx.shape == (4, 3)
+    assert limited_sim.producer.virtual_swap_best_idx[0] == global_sim.producer.virtual_swap_best_idx[0]
+    assert limited_sim.producer.virtual_swap_best_weight[0] == global_sim.producer.virtual_swap_best_weight[0]
+
+
+def test_limited_information_policy_matches_global_event_trace_when_every_candidate_is_available() -> None:
+    global_config = build_four_node_counterexample()
+    all_candidates_config = replace(global_config, virtual_swap_policy=_limited_policy(k=3, memory=3))
+
+    global_records = _collect_event_records(GillespieQBPSimulator(global_config, seed=53), 200)
+    limited_records = _collect_event_records(GillespieQBPSimulator(all_candidates_config, seed=53), 200)
+
+    assert limited_records == global_records
+
+
+def test_limited_information_policy_bounds_candidate_score_reads(monkeypatch) -> None:
+    def fail_global_scan(*args, **kwargs):
+        raise AssertionError("limited-information policy must not use the global swap scan")
+
+    monkeypatch.setattr(simulator_module, "_best_virtual_swap_for_node", fail_global_scan)
+    config = replace(build_four_node_counterexample(), virtual_swap_policy=_limited_policy(k=2, memory=3))
+    sim = GillespieQBPSimulator(config, seed=59)
+
+    counts = dict.fromkeys(range(sim.n_nodes), 0)
+    original_weight = sim.producer._virtual_swap_weight
+
+    def counting_weight(state, swap_idx):
+        node = int(sim.producer.swap_i[swap_idx])
+        counts[node] += 1
+        return original_weight(state, swap_idx)
+
+    monkeypatch.setattr(sim.producer, "_virtual_swap_weight", counting_weight)
+    sim.produce_next_event()
+
+    assert sum(counts.values()) > 0
+    assert all(count <= 5 for count in counts.values())
+
+
+def test_limited_information_memory_keeps_best_sampled_candidates_not_global_best(monkeypatch) -> None:
+    config = replace(
+        GillespieQBPConfig(
+            generation_rates=np.zeros((5, 5), dtype=np.float64),
+            demand_rates=np.zeros((5, 5), dtype=np.float64),
+            swap_rates=np.array([1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
+            service_rates=np.zeros((5, 5), dtype=np.float64),
+        ),
+        virtual_swap_policy=_limited_policy(k=3, memory=2),
+    )
+    sim = GillespieQBPSimulator(config, seed=61)
+    producer = sim.producer
+    start = int(producer.swap_node_starts[0])
+    sampled = np.asarray([start, start + 1, start + 2], dtype=np.int64)
+    unsampled_global_best = start + 5
+
+    sim.state.alpha[1, 2] = sim.state.alpha[2, 1] = 2
+    sim.state.alpha[1, 3] = sim.state.alpha[3, 1] = 7
+    sim.state.alpha[1, 4] = sim.state.alpha[4, 1] = 4
+    sim.state.alpha[3, 4] = sim.state.alpha[4, 3] = 99
+    producer.virtual_swap_memory_idx[0, :] = -1
+    producer.virtual_swap_memory_weight[0, :] = 0
+
+    def fixed_sample(node: int) -> np.ndarray:
+        return sampled if node == 0 else np.empty(0, dtype=np.int64)
+
+    monkeypatch.setattr(producer, "_sample_limited_virtual_swap_candidates", fixed_sample)
+    producer._refresh_limited_virtual_swap_node(sim.state, 0)
+
+    assert producer.virtual_swap_memory_idx[0].tolist() == [start + 1, start + 2]
+    assert producer.virtual_swap_memory_weight[0].tolist() == [7, 4]
+    assert unsampled_global_best not in producer.virtual_swap_memory_idx[0].tolist()
+
+
+def test_limited_information_memory_rescores_stale_candidates(monkeypatch) -> None:
+    config = replace(
+        GillespieQBPConfig(
+            generation_rates=np.zeros((4, 4), dtype=np.float64),
+            demand_rates=np.zeros((4, 4), dtype=np.float64),
+            swap_rates=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+            service_rates=np.zeros((4, 4), dtype=np.float64),
+        ),
+        virtual_swap_policy=_limited_policy(k=1, memory=1),
+    )
+    sim = GillespieQBPSimulator(config, seed=67)
+    producer = sim.producer
+    candidate = int(producer.swap_node_starts[0] + 2)
+
+    def first_sample(node: int) -> np.ndarray:
+        return np.asarray([candidate], dtype=np.int64) if node == 0 else np.empty(0, dtype=np.int64)
+
+    monkeypatch.setattr(producer, "_sample_limited_virtual_swap_candidates", first_sample)
+    sim.state.alpha[2, 3] = sim.state.alpha[3, 2] = 5
+    producer.virtual_swap_memory_idx[0, :] = -1
+    producer.virtual_swap_memory_weight[0, :] = 0
+    producer._refresh_limited_virtual_swap_node(sim.state, 0)
+
+    assert producer.virtual_swap_best_idx[0] == candidate
+    assert producer.virtual_swap_node_rates[0] == 1.0
+
+    sim.state.alpha[2, 3] = sim.state.alpha[3, 2] = 0
+    sim.state.alpha[0, 2] = sim.state.alpha[2, 0] = 3
+    monkeypatch.setattr(
+        producer,
+        "_sample_limited_virtual_swap_candidates",
+        lambda node: np.empty(0, dtype=np.int64),
+    )
+    producer._refresh_limited_virtual_swap_node(sim.state, 0)
+
+    assert producer.virtual_swap_memory_idx[0, 0] == candidate
+    assert producer.virtual_swap_memory_weight[0, 0] < 0
+    assert producer.virtual_swap_best_idx[0] == -1
+    assert producer.virtual_swap_node_rates[0] == 0.0
+
+
+def test_limited_information_virtual_swap_events_are_valid_and_apply_expected_state_changes() -> None:
+    config = replace(build_four_node_counterexample(), virtual_swap_policy=_limited_policy(k=2, memory=2))
+    sim = GillespieQBPSimulator(config, seed=71)
+    virtual_swaps_seen = 0
+
+    for _ in range(500):
+        event = sim.produce_next_event(until_time=20.0)
+        if event is None:
+            break
+
+        if event.event_type == "virtual_swap":
+            virtual_swaps_seen += 1
+            assert event.swap_idx is not None and event.swap_idx >= 0
+            assert event.i == int(sim.swap_i[event.swap_idx])
+            assert event.y == int(sim.swap_y[event.swap_idx])
+            assert event.z == int(sim.swap_z[event.swap_idx])
+            assert event.event_rate > 0.0
+
+            i = int(event.i)
+            y = int(event.y)
+            z = int(event.z)
+            idx = int(event.swap_idx)
+            old_h_mu = int(sim.state.h_mu[idx])
+            old_alpha_iy = int(sim.state.alpha[i, y])
+            old_alpha_iz = int(sim.state.alpha[i, z])
+            old_alpha_yz = int(sim.state.alpha[y, z])
+            old_swap_requests = sim.state.virtual_swap_requests
+            old_swap_deficit = sim.state.total_swap_deficit
+
+            sim.apply_event(event)
+
+            assert sim.state.h_mu[idx] == old_h_mu + 1
+            assert sim.state.alpha[i, y] == old_alpha_iy + 1
+            assert sim.state.alpha[i, z] == old_alpha_iz + 1
+            assert sim.state.alpha[y, z] == max(old_alpha_yz - 1, 0)
+            assert sim.state.virtual_swap_requests == old_swap_requests + 1
+            assert sim.state.total_swap_deficit == old_swap_deficit + 1
+        else:
+            sim.apply_event(event)
+
+        _assert_state_invariants(sim)
+
+    assert virtual_swaps_seen > 0
+
+
+@pytest.mark.gated
+@gated_test
+def test_gated_limited_information_parameter_sweep_sanity(tmp_path) -> None:
+    global_config = _cycle_runtime_config(num_nodes=5, seed=7, tmp_path=tmp_path)
+    global_result = GillespieQBPSimulator(global_config, seed=79).run(
+        until_time=250.0,
+        max_events=250_000,
+        sample_every=0,
+        progress=False,
+    )
+    global_ratio = global_result.services_completed / global_result.demand_arrivals
+    ratios: dict[tuple[int, int], float] = {}
+
+    for k, memory in ((1, 1), (2, 2), (6, 6)):
+        config = replace(global_config, virtual_swap_policy=_limited_policy(k=k, memory=memory))
+        sim = GillespieQBPSimulator(config, seed=79)
+        result = sim.run(
+            until_time=250.0,
+            max_events=250_000,
+            sample_every=0,
+            progress=False,
+        )
+        ratios[(k, memory)] = result.services_completed / result.demand_arrivals
+        _assert_state_invariants(sim)
+
+    assert all(0.0 <= ratio <= 1.0 for ratio in ratios.values())
+    assert abs(ratios[(6, 6)] - global_ratio) < 0.02
+
+
+@pytest.mark.gated
+@gated_test
+def test_gated_limited_information_long_run_preserves_state_invariants() -> None:
+    config = replace(build_four_node_counterexample(), virtual_swap_policy=_limited_policy(k=2, memory=2))
+    sim = GillespieQBPSimulator(config, seed=83)
+
+    for event_idx in range(5_000):
+        event = sim.step(until_time=500.0)
+        if event is None:
+            break
+        if event_idx % 100 == 0:
+            _assert_state_invariants(sim)
+
+    _assert_state_invariants(sim)
+    assert sim.events_processed > 0
+
+
+@pytest.mark.gated
+@gated_test
+def test_gated_limited_information_four_node_counterexample_makes_progress() -> None:
+    config = replace(build_four_node_counterexample(), virtual_swap_policy=_limited_policy(k=2, memory=2))
+    result = GillespieQBPSimulator(config, seed=89).run(
+        until_time=1_000.0,
+        max_events=500_000,
+        sample_every=0,
+        progress=False,
+    )
+    service_ratio = result.services_completed / result.demand_arrivals
+
+    assert result.virtual_swap_requests > 0
+    assert result.swaps_completed > 0
+    assert result.services_completed > 0
+    assert service_ratio > 0.35
+
+
+def test_limited_information_policy_rejects_missing_positive_parameters() -> None:
+    config = replace(
+        build_four_node_counterexample(),
+        virtual_swap_policy=_limited_policy(k=2, memory=0),
+    )
+
+    try:
+        GillespieQBPSimulator(config, seed=43)
+    except Exception as exc:
+        assert "positive k and memory" in str(exc)
+    else:
+        raise AssertionError("Expected invalid limited-information policy to fail validation.")
 
 
 def test_reset_measurements_keeps_state_but_resets_counters_and_time() -> None:
@@ -209,6 +590,29 @@ def test_altair_snapshot_plots_render_to_png(tmp_path) -> None:
     assert series_plot_path.stat().st_size > 0
 
 
+def test_limited_info_service_ratio_experiment_writes_snapshots_and_plot(tmp_path) -> None:
+    runs = run_limited_info_service_ratio_experiment(
+        n_nodes=4,
+        limited_policies=[(1, 1)],
+        output_dir=tmp_path / "limited-info",
+        until_time=2.0,
+        max_events=1_000,
+        sample_every=1,
+        seed_base=3,
+        progress=False,
+    )
+    plot_path = tmp_path / "limited-info-service-ratio.png"
+    plot_limited_info_service_ratio_runs(runs, plot_path)
+
+    assert [run.policy_label for run in runs] == ["full info", "limited k=1, m=1"]
+    assert all(run.snapshots for run in runs)
+    assert all(run.snapshots_path.exists() for run in runs)
+    assert all(run.simulation_config_path.exists() for run in runs)
+    assert all(0.0 <= run.summary.final_service_ratio <= 1.0 for run in runs)
+    assert plot_path.exists()
+    assert plot_path.stat().st_size > 0
+
+
 def test_cycle_consumption_edge_fraction_scales_with_graph_size() -> None:
     assert np.isclose(_cycle_consumption_edge_fraction(4, None), 2.0 / 6.0)
     assert np.isclose(_cycle_consumption_edge_fraction(8, None), 4.0 / 28.0)
@@ -256,6 +660,11 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
                     [2.0, 0.0, 0.0, 0.0],
                 ],
                 "swap_rates": [0.0, 1.0, 1.0, 0.0],
+                "virtual_swap_policy": {
+                    "mode": "power_of_k_memory",
+                    "k": 2,
+                    "memory": 3,
+                },
             }
         )
     )
@@ -269,6 +678,9 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
     assert runtime.demand_rates[0, 3] == 2.0
     assert runtime.service_rates[0, 1] == 0.0
     assert runtime.service_rates[0, 3] == 2.0
+    assert runtime.virtual_swap_policy.mode == "power_of_k_memory"
+    assert runtime.virtual_swap_policy.k == 2
+    assert runtime.virtual_swap_policy.memory == 3
 
 
 def test_simulation_input_config_rejects_asymmetric_rates() -> None:

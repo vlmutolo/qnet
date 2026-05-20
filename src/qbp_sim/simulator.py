@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from numba import njit
@@ -19,6 +19,16 @@ IntArray1D = NDArray[np.int64]
 FloatMatrix = NDArray[np.float64]
 IntMatrix = NDArray[np.int64]
 
+VIRTUAL_SWAP_POLICY_GLOBAL = "global"
+VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY = "power_of_k_memory"
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualSwapPolicy:
+    mode: str = VIRTUAL_SWAP_POLICY_GLOBAL
+    k: int = 0
+    memory: int = 0
+
 
 @dataclass(slots=True)
 class GillespieQBPConfig:
@@ -26,6 +36,7 @@ class GillespieQBPConfig:
     demand_rates: FloatMatrix
     swap_rates: IntArray1D | Array1D
     service_rates: FloatMatrix
+    virtual_swap_policy: VirtualSwapPolicy = field(default_factory=VirtualSwapPolicy)
 
 
 @dataclass(slots=True)
@@ -447,11 +458,20 @@ class GillespieQBPEventProducer:
         self.virtual_swap_node_rates = np.zeros(self.n_nodes, dtype=np.float64)
         self.active_virtual_swap_total = 0.0
         self.virtual_swap_rescan_nodes = np.empty(self.n_nodes, dtype=np.int64)
+        self.virtual_swap_memory_idx = np.empty((0, 0), dtype=np.int64)
+        self.virtual_swap_memory_weight = np.empty((0, 0), dtype=np.int64)
+        if self._uses_limited_virtual_swap_policy():
+            memory_size = int(config.virtual_swap_policy.memory)
+            self.virtual_swap_memory_idx = np.full((self.n_nodes, memory_size), -1, dtype=np.int64)
+            self.virtual_swap_memory_weight = np.zeros((self.n_nodes, memory_size), dtype=np.int64)
         self.physical_swap_best_deficit = np.zeros(self.n_nodes, dtype=np.int64)
         self.physical_swap_best_idx = np.full(self.n_nodes, -1, dtype=np.int64)
         self.physical_swap_node_rates = np.zeros(self.n_nodes, dtype=np.float64)
         self.active_physical_swap_total = 0.0
         self.rng = np.random.default_rng(seed)
+
+    def _uses_limited_virtual_swap_policy(self) -> bool:
+        return self.config.virtual_swap_policy.mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY
 
     def initialize(self, state: QBPState) -> None:
         self.active_virtual_service_total = _compute_active_virtual_service_rates(
@@ -473,7 +493,10 @@ class GillespieQBPEventProducer:
         self.active_virtual_swap_total = 0.0
         self.active_physical_swap_total = 0.0
         for node in range(self.n_nodes):
-            self._recompute_virtual_swap_node(state, node)
+            if self._uses_limited_virtual_swap_policy():
+                self._refresh_limited_virtual_swap_node(state, node)
+            else:
+                self._recompute_virtual_swap_node(state, node)
             self._recompute_physical_swap_node(state, node)
 
     def _recompute_virtual_service_pair(self, state: QBPState, x: int, y: int) -> None:
@@ -509,6 +532,63 @@ class GillespieQBPEventProducer:
         self.virtual_swap_node_rates[node] = new_rate
         self.active_virtual_swap_total += new_rate - old_rate
 
+    def _virtual_swap_weight(self, state: QBPState, swap_idx: int) -> int:
+        i = int(self.swap_i[swap_idx])
+        y = int(self.swap_y[swap_idx])
+        z = int(self.swap_z[swap_idx])
+        return int(state.alpha[y, z] - state.alpha[i, y] - state.alpha[i, z])
+
+    def _sample_limited_virtual_swap_candidates(self, node: int) -> NDArray[np.int64]:
+        start = int(self.swap_node_starts[node])
+        stop = int(self.swap_node_starts[node + 1])
+        count = stop - start
+        if count <= 0:
+            return np.empty(0, dtype=np.int64)
+
+        k = int(self.config.virtual_swap_policy.k)
+        if k >= count:
+            return np.arange(start, stop, dtype=np.int64)
+
+        offsets = self.rng.choice(count, size=k, replace=False)
+        return np.asarray(offsets, dtype=np.int64) + start
+
+    def _refresh_limited_virtual_swap_node(self, state: QBPState, node: int) -> None:
+        old_rate = float(self.virtual_swap_node_rates[node])
+        memory_size = int(self.config.virtual_swap_policy.memory)
+        candidates: dict[int, int] = {}
+
+        for slot in range(memory_size):
+            remembered_idx = int(self.virtual_swap_memory_idx[node, slot])
+            if remembered_idx >= 0:
+                candidates[remembered_idx] = self._virtual_swap_weight(state, remembered_idx)
+
+        for sampled_idx in self._sample_limited_virtual_swap_candidates(node):
+            idx = int(sampled_idx)
+            candidates[idx] = self._virtual_swap_weight(state, idx)
+
+        ranked = sorted(candidates.items(), key=lambda item: (-item[1], item[0]))
+        self.virtual_swap_memory_idx[node, :] = -1
+        self.virtual_swap_memory_weight[node, :] = 0
+        for slot, (idx, weight) in enumerate(ranked[:memory_size]):
+            self.virtual_swap_memory_idx[node, slot] = idx
+            self.virtual_swap_memory_weight[node, slot] = weight
+
+        best_idx = -1
+        best_weight = 0
+        if ranked and ranked[0][1] > 0:
+            best_idx = int(ranked[0][0])
+            best_weight = int(ranked[0][1])
+
+        self.virtual_swap_best_weight[node] = best_weight
+        self.virtual_swap_best_idx[node] = best_idx
+        new_rate = float(self.config.swap_rates[node]) if best_idx >= 0 else 0.0
+        self.virtual_swap_node_rates[node] = new_rate
+        self.active_virtual_swap_total += new_rate - old_rate
+
+    def _refresh_limited_virtual_swap_nodes(self, state: QBPState) -> None:
+        for node in range(self.n_nodes):
+            self._refresh_limited_virtual_swap_node(state, node)
+
     def _recompute_physical_swap_node(self, state: QBPState, node: int) -> None:
         old_rate = float(self.physical_swap_node_rates[node])
         best_deficit, best_idx = _best_physical_swap_for_node(
@@ -527,6 +607,8 @@ class GillespieQBPEventProducer:
 
     def _update_virtual_swap_for_alpha_pair_change(self, state: QBPState, a: int, b: int, delta: int) -> None:
         self._recompute_virtual_service_pair(state, a, b)
+        if self._uses_limited_virtual_swap_policy():
+            return
         self._recompute_virtual_swap_node(state, a)
         self._recompute_virtual_swap_node(state, b)
         total_delta, rescan_count = _update_virtual_swap_alpha_change_nonendpoints(
@@ -601,6 +683,9 @@ class GillespieQBPEventProducer:
             return
 
     def produce(self, state: QBPState, until_time: float | None = None) -> tuple[QBPEvent | None, bool]:
+        if self._uses_limited_virtual_swap_policy():
+            self._refresh_limited_virtual_swap_nodes(state)
+
         demand_total = self.demand_total
         generation_total = self.generation_total
         virtual_service_total = self.active_virtual_service_total
@@ -1058,7 +1143,28 @@ class GillespieQBPSimulator:
             demand_rates=demand_rates,
             swap_rates=swap_rates,
             service_rates=service_rates,
+            virtual_swap_policy=self._validate_virtual_swap_policy(config.virtual_swap_policy),
         )
+
+    def _validate_virtual_swap_policy(self, policy: VirtualSwapPolicy) -> VirtualSwapPolicy:
+        if isinstance(policy, dict):
+            policy = VirtualSwapPolicy(**policy)
+
+        mode = str(policy.mode).replace("-", "_")
+        if mode not in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY}:
+            raise ValueError(
+                "virtual_swap_policy.mode must be either "
+                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r} or {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}."
+            )
+
+        k = int(policy.k)
+        memory = int(policy.memory)
+        if k < 0 or memory < 0:
+            raise ValueError("virtual_swap_policy k and memory must be non-negative.")
+        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and (k <= 0 or memory <= 0):
+            raise ValueError("power_of_k_memory virtual swap policy requires positive k and memory.")
+
+        return VirtualSwapPolicy(mode=mode, k=k, memory=memory)
 
 
 def replay_event_stream(

@@ -5,7 +5,46 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from qbp_sim.simulator import GillespieQBPConfig
+from qbp_sim.simulator import (
+    VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+    GillespieQBPConfig,
+    VirtualSwapPolicy,
+)
+
+
+class VirtualSwapPolicyConfig(BaseModel):
+    """JSON-facing virtual swap scheduler policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(
+        default=VIRTUAL_SWAP_POLICY_GLOBAL,
+        description="Virtual swap policy: global or power_of_k_memory.",
+    )
+    k: int = Field(
+        default=0,
+        description="Number of fresh candidate swaps queried per actor refresh.",
+    )
+    memory: int = Field(
+        default=0,
+        description="Number of best candidate swaps remembered per actor.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_policy(self) -> VirtualSwapPolicyConfig:
+        mode = self.mode.replace("-", "_")
+        if mode not in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY}:
+            raise ValueError(
+                "virtual_swap_policy.mode must be either "
+                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r} or {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}."
+            )
+        if self.k < 0 or self.memory < 0:
+            raise ValueError("virtual_swap_policy k and memory must be non-negative.")
+        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and (self.k <= 0 or self.memory <= 0):
+            raise ValueError("power_of_k_memory virtual swap policy requires positive k and memory.")
+        self.mode = mode
+        return self
 
 
 class SimulationInputConfig(BaseModel):
@@ -21,6 +60,10 @@ class SimulationInputConfig(BaseModel):
     )
     swap_rates: list[float] = Field(
         description="Per-node swap hazard rates."
+    )
+    virtual_swap_policy: VirtualSwapPolicyConfig = Field(
+        default_factory=VirtualSwapPolicyConfig,
+        description="Optional virtual swap selection policy.",
     )
 
     @model_validator(mode="after")
@@ -65,6 +108,11 @@ class SimulationInputConfig(BaseModel):
             demand_rates=consumption,
             swap_rates=swap,
             service_rates=service_rates,
+            virtual_swap_policy=VirtualSwapPolicy(
+                mode=self.virtual_swap_policy.mode,
+                k=self.virtual_swap_policy.k,
+                memory=self.virtual_swap_policy.memory,
+            ),
         )
 
     @classmethod
