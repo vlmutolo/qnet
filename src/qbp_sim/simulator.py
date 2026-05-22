@@ -925,7 +925,7 @@ class GillespieQBPSimulator:
     def run(
         self,
         until_time: float,
-        max_events: int | None = 100_000,
+        max_events: int | None = None,
         sample_every: int = 500,
         trace_writer: EventTraceWriter | None = None,
         snapshot_writer: SnapshotWriter | None = None,

@@ -120,7 +120,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--max-events",
         type=int,
-        default=200_000,
+        default=0,
         help="Stop after this many events even if the time limit has not been reached; use 0 for no event cap.",
     )
     run_parser.add_argument("--seed", type=int, default=0, help="Seed for NumPy RNG.")
@@ -154,7 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     example_parser.add_argument(
         "--max-events",
         type=int,
-        default=200_000,
+        default=0,
         help="Stop after this many events even if the time limit has not been reached; use 0 for no event cap.",
     )
     example_parser.add_argument("--seed", type=int, default=0, help="Seed for NumPy RNG.")
@@ -262,7 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cycle_parser.add_argument(
         "--max-events",
         type=int,
-        default=200_000,
+        default=0,
         help="Stop each BP simulation after this many events if it has not reached --until; use 0 for no event cap.",
     )
     cycle_parser.add_argument(
@@ -357,7 +357,7 @@ def _build_parser() -> argparse.ArgumentParser:
     headroom_parser.add_argument(
         "--max-events",
         type=int,
-        default=200_000,
+        default=0,
         help="Stop each BP simulation after this many events if it has not reached --until; use 0 for no event cap.",
     )
     headroom_parser.add_argument(
@@ -441,7 +441,7 @@ def _build_parser() -> argparse.ArgumentParser:
     limited_parser.add_argument(
         "--max-events",
         type=int,
-        default=1_000_000,
+        default=0,
         help="Stop each simulation after this many events if it has not reached --until; use 0 for no event cap.",
     )
     limited_parser.add_argument(
