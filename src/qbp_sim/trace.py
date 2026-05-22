@@ -48,10 +48,6 @@ TRACE_SCHEMA = pa.schema(
 )
 
 
-def _event_to_trace_row(event: QBPEvent) -> dict[str, int | float | str | None]:
-    return {column: getattr(event, column) for column in TRACE_COLUMNS}
-
-
 class EventTraceWriter:
     """Write one JSON object per line into a Zstandard-compressed file."""
 
@@ -67,7 +63,7 @@ class EventTraceWriter:
         self._raw_handle = self.path.open("wb")
         compressor = zstd.ZstdCompressor(level=self.level)
         self._zstd_handle = compressor.stream_writer(self._raw_handle)
-        self._text_handle = io.TextIOWrapper(self._zstd_handle, encoding="utf-8", write_through=True)
+        self._text_handle = io.TextIOWrapper(self._zstd_handle, encoding="utf-8")
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -104,7 +100,11 @@ class ParquetEventTraceWriter:
         self.buffer_size = buffer_size
         self.compression = compression
         self._writer: pq.ParquetWriter | None = None
-        self._rows: list[dict[str, int | float | str | None]] = []
+        self._columns: dict[str, list[int | float | str | None]] = self._new_column_buffer()
+        self._row_count = 0
+
+    def _new_column_buffer(self) -> dict[str, list[int | float | str | None]]:
+        return {column: [] for column in TRACE_COLUMNS}
 
     def __enter__(self) -> ParquetEventTraceWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,18 +122,34 @@ class ParquetEventTraceWriter:
     def write(self, event: QBPEvent) -> None:
         if self._writer is None:
             raise RuntimeError("Parquet trace writer must be opened with a context manager before use.")
-        self._rows.append(_event_to_trace_row(event))
-        if len(self._rows) >= self.buffer_size:
+        columns = self._columns
+        columns["event_index"].append(event.event_index)
+        columns["time"].append(event.time)
+        columns["dt"].append(event.dt)
+        columns["total_rate"].append(event.total_rate)
+        columns["event_type"].append(event.event_type)
+        columns["event_rate"].append(event.event_rate)
+        columns["swap_idx"].append(event.swap_idx)
+        columns["x"].append(event.x)
+        columns["y"].append(event.y)
+        columns["z"].append(event.z)
+        columns["i"].append(event.i)
+        columns["backlog_total"].append(event.backlog_total)
+        columns["inventory_total"].append(event.inventory_total)
+        columns["scarcity_total"].append(event.scarcity_total)
+        self._row_count += 1
+        if self._row_count >= self.buffer_size:
             self.flush()
 
     def flush(self) -> None:
         if self._writer is None:
             raise RuntimeError("Parquet trace writer must be opened with a context manager before use.")
-        if not self._rows:
+        if self._row_count == 0:
             return
-        table = pa.Table.from_pylist(self._rows, schema=TRACE_SCHEMA)
+        table = pa.Table.from_pydict(self._columns, schema=TRACE_SCHEMA)
         self._writer.write_table(table)
-        self._rows.clear()
+        self._columns = self._new_column_buffer()
+        self._row_count = 0
 
     def close(self) -> None:
         if self._writer is not None:
