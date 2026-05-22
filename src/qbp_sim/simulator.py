@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from tqdm import tqdm
 
 from qbp_sim.events import QBPEvent
+from qbp_sim.fast import run_global_event_loop
 from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import QBPSnapshot, SnapshotWriter
 from qbp_sim.trace import EventTraceWriter
@@ -21,6 +22,7 @@ IntMatrix = NDArray[np.int64]
 
 VIRTUAL_SWAP_POLICY_GLOBAL = "global"
 VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY = "power_of_k_memory"
+FAST_GLOBAL_MIN_EVENT_CAP = 500_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -887,6 +889,8 @@ class GillespieQBPSimulator:
         )
         self.producer.initialize(self.state)
         self.applier = QBPEventApplier()
+        self._fast_rng_seed = -1 if seed is None else int(seed)
+        self._fast_rng_runs = 0
 
     def produce_next_event(self, until_time: float | None = None) -> QBPEvent | None:
         event, hit_limit = self.producer.produce(self.state, until_time=until_time)
@@ -938,6 +942,15 @@ class GillespieQBPSimulator:
         last_snapshot_key: tuple[int, float] | None = None
         use_progress = should_use_progress() if progress is None else progress
 
+        if self._can_use_fast_global_run(
+            max_events=max_events,
+            sample_every=sample_every,
+            trace_writer=trace_writer,
+            snapshot_writer=snapshot_writer,
+            use_progress=use_progress,
+        ):
+            return self._run_fast_global(until_time=until_time, max_events=max_events, sample_every=sample_every)
+
         if use_progress:
             with tqdm(
                 total=max_events,
@@ -984,6 +997,148 @@ class GillespieQBPSimulator:
         if sample_every > 0 and final_snapshot_key != last_snapshot_key:
             if snapshot_writer is not None:
                 snapshot_writer.write(self.build_snapshot())
+            sample_times.append(self.state.time)
+            backlog_samples.append(self.state.total_backlog)
+            inventory_samples.append(self.state.total_inventory)
+            alpha_samples.append(self.state.total_scarcity)
+
+        return self._build_result(sample_times, backlog_samples, inventory_samples, alpha_samples)
+
+    def _can_use_fast_global_run(
+        self,
+        *,
+        max_events: int | None,
+        sample_every: int,
+        trace_writer: EventTraceWriter | None,
+        snapshot_writer: SnapshotWriter | None,
+        use_progress: bool,
+    ) -> bool:
+        if self.config.virtual_swap_policy.mode != VIRTUAL_SWAP_POLICY_GLOBAL:
+            return False
+        if trace_writer is not None or snapshot_writer is not None or use_progress:
+            return False
+        # The fast loop preallocates sample buffers from the event cap. Time-only
+        # runs without sampling are still safe to accelerate.
+        if max_events is None and sample_every > 0:
+            return False
+        if max_events is not None and max_events - self.state.events_processed < FAST_GLOBAL_MIN_EVENT_CAP:
+            return False
+        return True
+
+    def _run_fast_global(
+        self,
+        *,
+        until_time: float,
+        max_events: int | None,
+        sample_every: int,
+    ) -> GillespieQBPResult:
+        max_events_limit = -1 if max_events is None else int(max_events)
+        rng_seed = -1
+        if self._fast_rng_seed >= 0:
+            rng_seed = self._fast_rng_seed + self._fast_rng_runs
+        self._fast_rng_runs += 1
+
+        (
+            current_time,
+            events_processed,
+            demand_arrivals,
+            pair_generations,
+            virtual_service_requests,
+            virtual_swap_requests,
+            services_completed,
+            swaps_completed,
+            total_virtual_backlog_count,
+            total_service_deficit_count,
+            total_swap_deficit_count,
+            total_inventory_count,
+            total_scarcity_count,
+            active_virtual_service_total,
+            active_physical_service_total,
+            active_virtual_swap_total,
+            active_physical_swap_total,
+            sample_times_array,
+            backlog_samples_array,
+            inventory_samples_array,
+            alpha_samples_array,
+            sample_count,
+            last_sample_event,
+            last_sample_time,
+        ) = run_global_event_loop(
+            self.state.q,
+            self.state.d,
+            self.state.alpha,
+            self.state.h_r,
+            self.state.h_mu,
+            self.state.time,
+            self.state.events_processed,
+            self.state.demand_arrivals,
+            self.state.pair_generations,
+            self.state.virtual_service_requests,
+            self.state.virtual_swap_requests,
+            self.state.services_completed,
+            self.state.swaps_completed,
+            self.state.total_virtual_backlog_count,
+            self.state.total_service_deficit_count,
+            self.state.total_swap_deficit_count,
+            self.state.total_inventory_count,
+            self.state.total_scarcity_count,
+            self.producer.generation_pair_rates,
+            self.producer.demand_pair_rates,
+            self.producer.service_pair_rates,
+            np.asarray(self.config.swap_rates, dtype=np.float64),
+            self.pair_u,
+            self.pair_v,
+            self.swap_i,
+            self.swap_y,
+            self.swap_z,
+            self.producer.swap_node_starts,
+            self.producer.active_virtual_service_rates,
+            self.producer.active_physical_service_rates,
+            self.producer.virtual_swap_best_weight,
+            self.producer.virtual_swap_best_idx,
+            self.producer.virtual_swap_node_rates,
+            self.producer.physical_swap_best_deficit,
+            self.producer.physical_swap_best_idx,
+            self.producer.physical_swap_node_rates,
+            self.producer.active_virtual_service_total,
+            self.producer.active_physical_service_total,
+            self.producer.active_virtual_swap_total,
+            self.producer.active_physical_swap_total,
+            float(until_time),
+            max_events_limit,
+            int(sample_every),
+            rng_seed,
+        )
+
+        self.state.time = float(current_time)
+        self.state.events_processed = int(events_processed)
+        self.state.demand_arrivals = int(demand_arrivals)
+        self.state.pair_generations = int(pair_generations)
+        self.state.virtual_service_requests = int(virtual_service_requests)
+        self.state.virtual_swap_requests = int(virtual_swap_requests)
+        self.state.services_completed = int(services_completed)
+        self.state.swaps_completed = int(swaps_completed)
+        self.state.total_virtual_backlog_count = int(total_virtual_backlog_count)
+        self.state.total_service_deficit_count = int(total_service_deficit_count)
+        self.state.total_swap_deficit_count = int(total_swap_deficit_count)
+        self.state.total_inventory_count = int(total_inventory_count)
+        self.state.total_scarcity_count = int(total_scarcity_count)
+
+        self.producer.active_virtual_service_total = float(active_virtual_service_total)
+        self.producer.active_physical_service_total = float(active_physical_service_total)
+        self.producer.active_virtual_swap_total = float(active_virtual_swap_total)
+        self.producer.active_physical_swap_total = float(active_physical_swap_total)
+
+        sample_times = [float(value) for value in sample_times_array[:sample_count]]
+        backlog_samples = [int(value) for value in backlog_samples_array[:sample_count]]
+        inventory_samples = [int(value) for value in inventory_samples_array[:sample_count]]
+        alpha_samples = [int(value) for value in alpha_samples_array[:sample_count]]
+        last_snapshot_key: tuple[int, float] | None = None
+        if last_sample_event >= 0:
+            last_snapshot_key = (int(last_sample_event), float(last_sample_time))
+
+        final_snapshot_key = (self.state.events_processed, self.state.time)
+        if sample_every > 0 and final_snapshot_key != last_snapshot_key:
             sample_times.append(self.state.time)
             backlog_samples.append(self.state.total_backlog)
             inventory_samples.append(self.state.total_inventory)
