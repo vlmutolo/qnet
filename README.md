@@ -77,6 +77,8 @@ samples `k` fresh swap candidates, re-scores its remembered candidates, keeps th
 candidates it has seen, and exposes only the best positive remembered candidate to the virtual
 swap clock. The centralized simulator still stores dense matrices, but this policy constrains
 which entries the simulated actor is allowed to inspect while choosing swaps.
+Set `memory` to `0` for a query-only variant that picks from the fresh `k` candidates without
+carrying remembered candidates across refreshes.
 
 The runtime topology is inferred from `generation_rates > 0`, and service hazards default to the
 requested `consumption_rates` on each demanded pair times `capacity_headroom`.

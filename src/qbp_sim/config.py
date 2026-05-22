@@ -41,8 +41,8 @@ class VirtualSwapPolicyConfig(BaseModel):
             )
         if self.k < 0 or self.memory < 0:
             raise ValueError("virtual_swap_policy k and memory must be non-negative.")
-        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and (self.k <= 0 or self.memory <= 0):
-            raise ValueError("power_of_k_memory virtual swap policy requires positive k and memory.")
+        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and self.k <= 0:
+            raise ValueError("power_of_k_memory virtual swap policy requires positive k.")
         self.mode = mode
         return self
 

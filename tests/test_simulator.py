@@ -487,16 +487,39 @@ def test_gated_limited_information_four_node_counterexample_makes_progress() -> 
     assert service_ratio > 0.35
 
 
-def test_limited_information_policy_rejects_missing_positive_parameters() -> None:
+def test_limited_information_policy_allows_query_only_memory_zero() -> None:
+    initial_alpha = np.zeros((4, 4), dtype=np.int64)
+    initial_alpha[2, 3] = initial_alpha[3, 2] = 5
+    config = replace(
+        GillespieQBPConfig(
+            generation_rates=np.zeros((4, 4), dtype=np.float64),
+            demand_rates=np.zeros((4, 4), dtype=np.float64),
+            swap_rates=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+            service_rates=np.zeros((4, 4), dtype=np.float64),
+        ),
+        virtual_swap_policy=_limited_policy(k=3, memory=0),
+    )
+
+    sim = GillespieQBPSimulator(config, seed=43, initial_alpha=initial_alpha)
+    assert sim.producer.virtual_swap_memory_idx.shape == (4, 0)
+
+    event = sim.produce_next_event(until_time=20.0)
+
+    assert event is not None
+    assert event.event_type == "virtual_swap"
+    assert event.i == 0
+
+
+def test_limited_information_policy_rejects_missing_positive_k() -> None:
     config = replace(
         build_four_node_counterexample(),
-        virtual_swap_policy=_limited_policy(k=2, memory=0),
+        virtual_swap_policy=_limited_policy(k=0, memory=2),
     )
 
     try:
         GillespieQBPSimulator(config, seed=43)
     except Exception as exc:
-        assert "positive k and memory" in str(exc)
+        assert "positive k" in str(exc)
     else:
         raise AssertionError("Expected invalid limited-information policy to fail validation.")
 
@@ -805,7 +828,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
                 "virtual_swap_policy": {
                     "mode": "power_of_k_memory",
                     "k": 2,
-                    "memory": 3,
+                    "memory": 0,
                 },
             }
         )
@@ -824,7 +847,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
     assert runtime.swap_rates[1] == 1.25
     assert runtime.virtual_swap_policy.mode == "power_of_k_memory"
     assert runtime.virtual_swap_policy.k == 2
-    assert runtime.virtual_swap_policy.memory == 3
+    assert runtime.virtual_swap_policy.memory == 0
 
 
 def test_simulation_input_config_rejects_asymmetric_rates() -> None:

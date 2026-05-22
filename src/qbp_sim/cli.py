@@ -89,8 +89,8 @@ def _parse_limited_policy(value: str) -> tuple[int, int]:
         memory = int(parts[1])
     except ValueError as exc:
         raise argparse.ArgumentTypeError("limited policy K and M must be integers.") from exc
-    if k <= 0 or memory <= 0:
-        raise argparse.ArgumentTypeError("limited policy K and M must be positive.")
+    if k <= 0 or memory < 0:
+        raise argparse.ArgumentTypeError("limited policy K must be positive and M must be non-negative.")
     return k, memory
 
 

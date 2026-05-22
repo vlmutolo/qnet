@@ -250,8 +250,8 @@ def run_limited_info_service_ratio_experiment(
         ("full info", "global", None, None, base_simulation_input)
     ]
     for k, memory in limited_policies:
-        if k <= 0 or memory <= 0:
-            raise ValueError("limited policy k and memory must be positive.")
+        if k <= 0 or memory < 0:
+            raise ValueError("limited policy k must be positive and memory must be non-negative.")
         policy = VirtualSwapPolicyConfig(mode="power_of_k_memory", k=k, memory=memory)
         variants.append(
             (

@@ -1190,8 +1190,8 @@ class GillespieQBPSimulator:
         memory = int(policy.memory)
         if k < 0 or memory < 0:
             raise ValueError("virtual_swap_policy k and memory must be non-negative.")
-        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and (k <= 0 or memory <= 0):
-            raise ValueError("power_of_k_memory virtual swap policy requires positive k and memory.")
+        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and k <= 0:
+            raise ValueError("power_of_k_memory virtual swap policy requires positive k.")
 
         return VirtualSwapPolicy(mode=mode, k=k, memory=memory)
 
