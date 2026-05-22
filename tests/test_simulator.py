@@ -13,8 +13,8 @@ import pytest
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.examples import build_four_node_counterexample
 from qbp_sim.experiments import (
+    _apply_capacity_headroom,
     _cycle_consumption_edge_fraction,
-    _scale_generation_rates,
     plot_limited_info_service_ratio_runs,
     run_limited_info_service_ratio_experiment,
 )
@@ -645,7 +645,7 @@ def test_cycle_consumption_edge_fraction_scales_with_graph_size() -> None:
     assert _cycle_consumption_edge_fraction(16, 0.125) == 0.125
 
 
-def test_scale_generation_rates_only_scales_generation_matrix() -> None:
+def test_capacity_headroom_scales_capacity_rates_not_demand_rates() -> None:
     input_config = SimulationInputConfig(
         generation_rates=[
             [0.0, 2.0, 3.0],
@@ -660,11 +660,14 @@ def test_scale_generation_rates_only_scales_generation_matrix() -> None:
         swap_rates=[17.0, 19.0, 23.0],
     )
 
-    scaled = _scale_generation_rates(input_config, 1.05)
+    scaled = _apply_capacity_headroom(input_config, 1.05)
+    runtime = scaled.to_runtime_config()
 
-    assert np.allclose(np.asarray(scaled.generation_rates), np.asarray(input_config.generation_rates) * 1.05)
-    assert np.allclose(np.asarray(scaled.consumption_rates), np.asarray(input_config.consumption_rates))
-    assert np.allclose(np.asarray(scaled.swap_rates), np.asarray(input_config.swap_rates))
+    assert scaled.capacity_headroom == 1.05
+    assert np.allclose(runtime.generation_rates, np.asarray(input_config.generation_rates) * 1.05)
+    assert np.allclose(runtime.demand_rates, np.asarray(input_config.consumption_rates))
+    assert np.allclose(runtime.service_rates, np.asarray(input_config.consumption_rates) * 1.05)
+    assert np.allclose(runtime.swap_rates, np.asarray(input_config.swap_rates) * 1.05)
 
 
 def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) -> None:
@@ -685,6 +688,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
                     [2.0, 0.0, 0.0, 0.0],
                 ],
                 "swap_rates": [0.0, 1.0, 1.0, 0.0],
+                "capacity_headroom": 1.25,
                 "virtual_swap_policy": {
                     "mode": "power_of_k_memory",
                     "k": 2,
@@ -698,11 +702,13 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
     runtime = input_config.to_runtime_config()
 
     assert input_config.num_nodes == 4
-    assert runtime.generation_rates[0, 1] == 1.0
+    assert input_config.capacity_headroom == 1.25
+    assert runtime.generation_rates[0, 1] == 1.25
     assert runtime.generation_rates[0, 3] == 0.0
     assert runtime.demand_rates[0, 3] == 2.0
     assert runtime.service_rates[0, 1] == 0.0
-    assert runtime.service_rates[0, 3] == 2.0
+    assert runtime.service_rates[0, 3] == 2.5
+    assert runtime.swap_rates[1] == 1.25
     assert runtime.virtual_swap_policy.mode == "power_of_k_memory"
     assert runtime.virtual_swap_policy.k == 2
     assert runtime.virtual_swap_policy.memory == 3

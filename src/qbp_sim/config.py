@@ -61,6 +61,13 @@ class SimulationInputConfig(BaseModel):
     swap_rates: list[float] = Field(
         description="Per-node swap hazard rates."
     )
+    capacity_headroom: float = Field(
+        default=1.0,
+        description=(
+            "Multiplier applied to controllable capacity/opportunity rates at runtime: "
+            "generation, swap, and service rates. Demand/consumption rates are not scaled."
+        ),
+    )
     virtual_swap_policy: VirtualSwapPolicyConfig = Field(
         default_factory=VirtualSwapPolicyConfig,
         description="Optional virtual swap selection policy.",
@@ -86,6 +93,8 @@ class SimulationInputConfig(BaseModel):
             raise ValueError("swap_rates must contain one rate per node.")
         if np.any(swap < 0.0):
             raise ValueError("swap_rates must be non-negative.")
+        if self.capacity_headroom <= 0.0:
+            raise ValueError("capacity_headroom must be positive.")
         return self
 
     @property
@@ -101,7 +110,10 @@ class SimulationInputConfig(BaseModel):
         consumption = consumption.copy()
         np.fill_diagonal(generation, 0.0)
         np.fill_diagonal(consumption, 0.0)
-        service_rates = consumption.copy()
+        headroom = float(self.capacity_headroom)
+        generation *= headroom
+        swap *= headroom
+        service_rates = consumption.copy() * headroom
 
         return GillespieQBPConfig(
             generation_rates=generation,

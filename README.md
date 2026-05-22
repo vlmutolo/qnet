@@ -55,7 +55,10 @@ JSON simulation input is validated with Pydantic and currently only needs:
 - `consumption_rates`
 - `swap_rates`
 
-It may also include an optional virtual swap scheduler policy:
+It may also include `capacity_headroom`, an optional multiplier for controllable capacity and
+opportunity rates. At runtime, `capacity_headroom` scales `generation_rates`, `swap_rates`, and
+service hazards, while leaving demand arrivals from `consumption_rates` unchanged. It may also
+include an optional virtual swap scheduler policy:
 
 ```json
 {
@@ -76,7 +79,7 @@ swap clock. The centralized simulator still stores dense matrices, but this poli
 which entries the simulated actor is allowed to inspect while choosing swaps.
 
 The runtime topology is inferred from `generation_rates > 0`, and service hazards default to the
-requested `consumption_rates` on each demanded pair.
+requested `consumption_rates` on each demanded pair times `capacity_headroom`.
 
 The Gillespie engine currently supports six event families:
 
@@ -149,6 +152,12 @@ Compare full-information and limited-information policies on an LP-derived cycle
 
 ```bash
 uv run qbp-sim limited-info-service-ratio --n 5 --until 1000 --limited-policies 1:1 2:2 4:4 --plot-start-time 100
+```
+
+Compare service-gap decay under different capacity-headroom multipliers:
+
+```bash
+uv run qbp-sim headroom-service-ratio --n 16 --until 10000 --headrooms 1.0 1.01 1.05
 ```
 
 Write a compressed event trace:

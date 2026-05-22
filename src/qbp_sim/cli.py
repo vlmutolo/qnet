@@ -9,10 +9,10 @@ from qbp_sim.config import load_simulation_config
 from qbp_sim.examples import build_four_node_counterexample
 from qbp_sim.experiments import (
     plot_cycle_service_ratio_runs,
-    plot_generation_multiplier_runs,
+    plot_headroom_runs,
     plot_limited_info_service_ratio_runs,
     run_cycle_service_ratio_experiment,
-    run_generation_multiplier_experiment,
+    run_headroom_experiment,
     run_limited_info_service_ratio_experiment,
 )
 from qbp_sim.simulator import (
@@ -315,66 +315,72 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path for the combined Altair-rendered plot.",
     )
 
-    genmult_parser = subparsers.add_parser(
-        "generation-multiplier-service-ratio",
-        help="Solve one LP-derived cycle instance, scale its generation rates, run BP, and plot service-gap decay.",
+    headroom_parser = subparsers.add_parser(
+        "headroom-service-ratio",
+        help=(
+            "Solve one LP-derived cycle instance, apply capacity headroom to generation, "
+            "swap, and service rates, run BP, and plot service-gap decay."
+        ),
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--n",
         type=int,
         default=16,
         help="Cycle size to generate, solve, and simulate.",
     )
-    genmult_parser.add_argument(
-        "--generation-multipliers",
+    headroom_parser.add_argument(
+        "--headrooms",
         type=float,
         nargs="+",
         default=[1.0, 1.01, 1.05],
-        help="Multipliers applied to every LP-derived generation rate before running BP.",
+        help=(
+            "Capacity multipliers applied at runtime to LP-derived generation rates, "
+            "swap rates, and service opportunity rates. Demand rates are not scaled."
+        ),
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--burn-in",
         type=float,
         default=0.0,
         help="Warm the BP simulator to this time, then reset counters/time before the measured run.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--until",
         type=float,
         default=100.0,
         help="Stop each BP simulation at this simulation time.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--max-events",
         type=int,
         default=200_000,
         help="Stop each BP simulation after this many events if it has not reached --until.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--sample-every",
         type=int,
         default=500,
         help="Record a snapshot every N events for plotting.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--seed-base",
         type=int,
         default=0,
         help="Base seed for the LP and each BP run.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--gen-scale",
         type=float,
         default=10.0,
         help="Scale factor applied to cycle-edge generation capacities before solving the LP.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--cons-scale",
         type=float,
         default=1.0,
         help="Scale factor applied to sampled consumption demands before solving the LP.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--cons-edge-fraction",
         type=float,
         default=None,
@@ -383,23 +389,23 @@ def _build_parser() -> argparse.ArgumentParser:
             "By default the experiment uses a size-aware rule with about n/2 active demand pairs."
         ),
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--swap-rate",
         type=float,
         default=100.0,
         help="Uniform per-node swap cap used in the LP instance.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("output/generation_multiplier_service_ratio"),
+        default=Path("output/headroom_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs, scaled configs, and BP snapshots.",
+        help="Directory to write LP outputs, headroom configs, and BP snapshots.",
     )
-    genmult_parser.add_argument(
+    headroom_parser.add_argument(
         "--plot-out",
         type=Path,
-        default=Path("output/plots/generation_multiplier_service_ratio_gap.png"),
+        default=Path("output/plots/headroom_service_ratio_gap.png"),
         metavar="OUTFILE",
         help="Path for the combined Altair-rendered plot.",
     )
@@ -472,6 +478,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=100.0,
         help="Uniform per-node swap cap used in the LP instance.",
+    )
+    limited_parser.add_argument(
+        "--headroom",
+        type=float,
+        default=1.0,
+        help=(
+            "Capacity multiplier applied at runtime to LP-derived generation rates, "
+            "swap rates, and service opportunity rates. Demand rates are not scaled."
+        ),
     )
     limited_parser.add_argument(
         "--output-dir",
@@ -645,10 +660,10 @@ def main(argv: list[str] | None = None) -> None:
                 f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
             )
         print(f"\nWrote plot to {args.plot_out}")
-    if args.command == "generation-multiplier-service-ratio":
-        runs = run_generation_multiplier_experiment(
+    if args.command == "headroom-service-ratio":
+        runs = run_headroom_experiment(
             n_nodes=args.n,
-            generation_multipliers=args.generation_multipliers,
+            capacity_headrooms=args.headrooms,
             output_dir=args.output_dir,
             burn_in_time=args.burn_in,
             until_time=args.until,
@@ -660,12 +675,12 @@ def main(argv: list[str] | None = None) -> None:
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
         )
-        plot_generation_multiplier_runs(runs, args.plot_out)
-        print("Generation-multiplier service-gap experiment")
+        plot_headroom_runs(runs, args.plot_out)
+        print("Headroom service-gap experiment")
         for run in runs:
             summary = run.summary
             print(
-                f"n={run.n_nodes} generation_multiplier={run.generation_multiplier:g} "
+                f"n={run.n_nodes} capacity_headroom={run.capacity_headroom:g} "
                 f"final_time={summary.final_time:.3f} "
                 f"final_service_ratio={summary.final_service_ratio:.6f} "
                 f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
@@ -684,6 +699,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_scale=args.cons_scale,
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
+            capacity_headroom=args.headroom,
         )
         plot_limited_info_service_ratio_runs(runs, args.plot_out, plot_start_time=args.plot_start_time)
         print("Limited-info service-ratio experiment")

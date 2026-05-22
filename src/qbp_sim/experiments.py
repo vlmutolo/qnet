@@ -28,9 +28,9 @@ class CycleServiceRatioRun:
 
 
 @dataclass(slots=True)
-class GenerationMultiplierRun:
+class HeadroomRun:
     n_nodes: int
-    generation_multiplier: float
+    capacity_headroom: float
     lp_json_path: Path
     simulation_config_path: Path
     snapshots_path: Path
@@ -79,8 +79,8 @@ def _cycle_consumption_edge_fraction(
     return min(1.0, float(target_pairs) / float(total_pairs))
 
 
-def _generation_multiplier_slug(multiplier: float) -> str:
-    return f"{multiplier:.6f}".rstrip("0").rstrip(".").replace(".", "p")
+def _headroom_slug(headroom: float) -> str:
+    return f"{headroom:.6f}".rstrip("0").rstrip(".").replace(".", "p")
 
 
 def _policy_slug(policy_label: str) -> str:
@@ -93,12 +93,13 @@ def _policy_slug(policy_label: str) -> str:
     )
 
 
-def _scale_generation_rates(
+def _apply_capacity_headroom(
     simulation_input: SimulationInputConfig,
-    multiplier: float,
+    headroom: float,
 ) -> SimulationInputConfig:
-    scaled_generation = np.asarray(simulation_input.generation_rates, dtype=np.float64) * float(multiplier)
-    return simulation_input.model_copy(update={"generation_rates": scaled_generation.tolist()})
+    if headroom <= 0.0:
+        raise ValueError("capacity headroom must be positive.")
+    return simulation_input.model_copy(update={"capacity_headroom": float(headroom)})
 
 
 def run_limited_info_service_ratio_experiment(
@@ -117,6 +118,7 @@ def run_limited_info_service_ratio_experiment(
     cons_max_edge_weight: float = 7.0,
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
+    capacity_headroom: float = 1.0,
     progress: bool | None = None,
 ) -> list[LimitedInfoServiceRatioRun]:
     if sample_every <= 0:
@@ -151,6 +153,8 @@ def run_limited_info_service_ratio_experiment(
     )
     if base_simulation_input is None:
         raise RuntimeError(f"LP solve failed for cycle n={n_nodes}.")
+    base_simulation_input = _apply_capacity_headroom(base_simulation_input, capacity_headroom)
+    base_simulation_config_path.write_text(base_simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
     variants: list[tuple[str, str, int | None, int | None, SimulationInputConfig]] = [
         ("full info", "global", None, None, base_simulation_input)
@@ -294,10 +298,10 @@ def run_cycle_service_ratio_experiment(
     return runs
 
 
-def run_generation_multiplier_experiment(
+def run_headroom_experiment(
     *,
     n_nodes: int,
-    generation_multipliers: list[float],
+    capacity_headrooms: list[float],
     output_dir: str | Path,
     burn_in_time: float,
     until_time: float,
@@ -312,11 +316,11 @@ def run_generation_multiplier_experiment(
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
     progress: bool | None = None,
-) -> list[GenerationMultiplierRun]:
+) -> list[HeadroomRun]:
     if sample_every <= 0:
-        raise ValueError("sample_every must be positive for generation-multiplier experiments.")
-    if not generation_multipliers:
-        raise ValueError("generation_multipliers must not be empty.")
+        raise ValueError("sample_every must be positive for headroom experiments.")
+    if not capacity_headrooms:
+        raise ValueError("capacity_headrooms must not be empty.")
 
     base_dir = Path(output_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -346,16 +350,16 @@ def run_generation_multiplier_experiment(
     if base_simulation_input is None:
         raise RuntimeError(f"LP solve failed for cycle n={n_nodes}.")
 
-    runs: list[GenerationMultiplierRun] = []
-    for multiplier in generation_multipliers:
-        case_dir = base_dir / f"genmult_{_generation_multiplier_slug(multiplier)}"
+    runs: list[HeadroomRun] = []
+    for headroom in capacity_headrooms:
+        case_dir = base_dir / f"headroom_{_headroom_slug(headroom)}"
         case_dir.mkdir(parents=True, exist_ok=True)
         simulation_config_path = case_dir / "simulation_config.json"
         snapshots_path = case_dir / "bp_snapshots.jsonl.zst"
-        scaled_input = _scale_generation_rates(base_simulation_input, multiplier)
-        simulation_config_path.write_text(scaled_input.model_dump_json(indent=2))
+        headroom_input = _apply_capacity_headroom(base_simulation_input, headroom)
+        simulation_config_path.write_text(headroom_input.model_dump_json(indent=2))
 
-        simulator = GillespieQBPSimulator(config=scaled_input.to_runtime_config(), seed=run_seed)
+        simulator = GillespieQBPSimulator(config=headroom_input.to_runtime_config(), seed=run_seed)
         if burn_in_time > 0.0:
             simulator.run(
                 until_time=burn_in_time,
@@ -376,9 +380,9 @@ def run_generation_multiplier_experiment(
             snapshots = list(snapshot_reader)
 
         runs.append(
-            GenerationMultiplierRun(
+            HeadroomRun(
                 n_nodes=n_nodes,
-                generation_multiplier=multiplier,
+                capacity_headroom=headroom,
                 lp_json_path=lp_json_path,
                 simulation_config_path=simulation_config_path,
                 snapshots_path=snapshots_path,
@@ -437,15 +441,15 @@ def plot_cycle_service_ratio_runs(
     save_chart(chart, output_path)
 
 
-def plot_generation_multiplier_runs(
-    runs: list[GenerationMultiplierRun],
+def plot_headroom_runs(
+    runs: list[HeadroomRun],
     output_path: str | Path,
 ) -> None:
-    ordered_runs = sorted(runs, key=lambda run: run.generation_multiplier)
+    ordered_runs = sorted(runs, key=lambda run: run.capacity_headroom)
     rows: list[dict[str, float | int | str]] = []
-    series_order = [f"x{run.generation_multiplier:g}" for run in ordered_runs]
+    series_order = [f"x{run.capacity_headroom:g}" for run in ordered_runs]
     for order, run in enumerate(ordered_runs):
-        label = f"x{run.generation_multiplier:g}"
+        label = f"x{run.capacity_headroom:g}"
         for snapshot in run.snapshots:
             rows.append(
                 {
@@ -467,7 +471,7 @@ def plot_generation_multiplier_runs(
                 title="1 - service_ratio",
                 scale=alt.Scale(type="log"),
             ),
-            color=alt.Color("series:N", title="generation multiplier", sort=series_order),
+            color=alt.Color("series:N", title="capacity headroom", sort=series_order),
             detail="series:N",
             tooltip=[
                 alt.Tooltip("series:N"),
@@ -479,7 +483,7 @@ def plot_generation_multiplier_runs(
         .properties(
             width=860,
             height=480,
-            title=f"BP service-gap decay on LP-derived cycle n={ordered_runs[0].n_nodes} with scaled generation (log-log)",
+            title=f"BP service-gap decay on LP-derived cycle n={ordered_runs[0].n_nodes} with capacity headroom (log-log)",
         )
     )
     save_chart(chart, output_path)
