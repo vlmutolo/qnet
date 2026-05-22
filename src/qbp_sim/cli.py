@@ -94,6 +94,10 @@ def _parse_limited_policy(value: str) -> tuple[int, int]:
     return k, memory
 
 
+def _max_events_limit(value: int) -> int | None:
+    return None if value <= 0 else value
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qbp-sim",
@@ -117,7 +121,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-events",
         type=int,
         default=200_000,
-        help="Stop after this many events even if the time limit has not been reached.",
+        help="Stop after this many events even if the time limit has not been reached; use 0 for no event cap.",
     )
     run_parser.add_argument("--seed", type=int, default=0, help="Seed for NumPy RNG.")
     run_parser.add_argument(
@@ -151,7 +155,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-events",
         type=int,
         default=200_000,
-        help="Stop after this many events even if time limit has not been reached.",
+        help="Stop after this many events even if the time limit has not been reached; use 0 for no event cap.",
     )
     example_parser.add_argument("--seed", type=int, default=0, help="Seed for NumPy RNG.")
     example_parser.add_argument(
@@ -259,7 +263,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-events",
         type=int,
         default=200_000,
-        help="Stop each BP simulation after this many events if it has not reached --until.",
+        help="Stop each BP simulation after this many events if it has not reached --until; use 0 for no event cap.",
     )
     cycle_parser.add_argument(
         "--sample-every",
@@ -354,7 +358,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-events",
         type=int,
         default=200_000,
-        help="Stop each BP simulation after this many events if it has not reached --until.",
+        help="Stop each BP simulation after this many events if it has not reached --until; use 0 for no event cap.",
     )
     headroom_parser.add_argument(
         "--sample-every",
@@ -438,7 +442,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-events",
         type=int,
         default=1_000_000,
-        help="Stop each simulation after this many events if it has not reached --until.",
+        help="Stop each simulation after this many events if it has not reached --until; use 0 for no event cap.",
     )
     limited_parser.add_argument(
         "--sample-every",
@@ -520,12 +524,12 @@ def main(argv: list[str] | None = None) -> None:
         config = _apply_virtual_swap_policy_args(input_config.to_runtime_config(), args)
         sim = GillespieQBPSimulator(config=config, seed=args.seed)
         if args.trace is None and args.snapshots is None:
-            result = sim.run(until_time=args.until, max_events=args.max_events, sample_every=args.sample_every)
+            result = sim.run(until_time=args.until, max_events=_max_events_limit(args.max_events), sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
             with open_event_trace_writer(args.trace) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
-                    max_events=args.max_events,
+                    max_events=_max_events_limit(args.max_events),
                     sample_every=args.sample_every,
                     trace_writer=trace_writer,
                 )
@@ -533,7 +537,7 @@ def main(argv: list[str] | None = None) -> None:
             with SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
-                    max_events=args.max_events,
+                    max_events=_max_events_limit(args.max_events),
                     sample_every=args.sample_every,
                     snapshot_writer=snapshot_writer,
                 )
@@ -541,7 +545,7 @@ def main(argv: list[str] | None = None) -> None:
             with open_event_trace_writer(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
-                    max_events=args.max_events,
+                    max_events=_max_events_limit(args.max_events),
                     sample_every=args.sample_every,
                     trace_writer=trace_writer,
                     snapshot_writer=snapshot_writer,
@@ -561,12 +565,12 @@ def main(argv: list[str] | None = None) -> None:
         config = _apply_virtual_swap_policy_args(build_four_node_counterexample(), args)
         sim = GillespieQBPSimulator(config=config, seed=args.seed)
         if args.trace is None and args.snapshots is None:
-            result = sim.run(until_time=args.until, max_events=args.max_events, sample_every=args.sample_every)
+            result = sim.run(until_time=args.until, max_events=_max_events_limit(args.max_events), sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
             with open_event_trace_writer(args.trace) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
-                    max_events=args.max_events,
+                    max_events=_max_events_limit(args.max_events),
                     sample_every=args.sample_every,
                     trace_writer=trace_writer,
                 )
@@ -574,7 +578,7 @@ def main(argv: list[str] | None = None) -> None:
             with SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
-                    max_events=args.max_events,
+                    max_events=_max_events_limit(args.max_events),
                     sample_every=args.sample_every,
                     snapshot_writer=snapshot_writer,
                 )
@@ -582,7 +586,7 @@ def main(argv: list[str] | None = None) -> None:
             with open_event_trace_writer(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
-                    max_events=args.max_events,
+                    max_events=_max_events_limit(args.max_events),
                     sample_every=args.sample_every,
                     trace_writer=trace_writer,
                     snapshot_writer=snapshot_writer,
@@ -642,7 +646,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
             burn_in_time=args.burn_in,
             until_time=args.until,
-            max_events=args.max_events,
+            max_events=_max_events_limit(args.max_events),
             sample_every=args.sample_every,
             seed_base=args.seed_base,
             gen_scale=args.gen_scale,
@@ -667,7 +671,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
             burn_in_time=args.burn_in,
             until_time=args.until,
-            max_events=args.max_events,
+            max_events=_max_events_limit(args.max_events),
             sample_every=args.sample_every,
             seed_base=args.seed_base,
             gen_scale=args.gen_scale,
@@ -692,7 +696,7 @@ def main(argv: list[str] | None = None) -> None:
             limited_policies=args.limited_policies,
             output_dir=args.output_dir,
             until_time=args.until,
-            max_events=args.max_events,
+            max_events=_max_events_limit(args.max_events),
             sample_every=args.sample_every,
             seed_base=args.seed_base,
             gen_scale=args.gen_scale,

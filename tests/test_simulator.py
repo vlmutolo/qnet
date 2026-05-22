@@ -156,6 +156,14 @@ def test_four_node_example_builds_and_runs() -> None:
     assert result.demand_arrivals > 0
 
 
+def test_run_can_stop_by_time_without_event_cap() -> None:
+    sim = GillespieQBPSimulator(build_four_node_counterexample(), seed=11)
+    result = sim.run(until_time=0.5, max_events=None, sample_every=0, progress=False)
+
+    assert result.final_time == 0.5
+    assert result.events_processed > 0
+
+
 def test_default_virtual_swap_policy_matches_explicit_global_policy() -> None:
     default_config = build_four_node_counterexample()
     explicit_global_config = replace(default_config, virtual_swap_policy=VirtualSwapPolicy(mode="global"))

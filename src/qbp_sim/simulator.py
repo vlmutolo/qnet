@@ -925,7 +925,7 @@ class GillespieQBPSimulator:
     def run(
         self,
         until_time: float,
-        max_events: int = 100_000,
+        max_events: int | None = 100_000,
         sample_every: int = 500,
         trace_writer: EventTraceWriter | None = None,
         snapshot_writer: SnapshotWriter | None = None,
@@ -944,7 +944,9 @@ class GillespieQBPSimulator:
                 desc="simulate",
                 unit="event",
             ) as progress_bar:
-                while self.state.time < until_time and self.state.events_processed < max_events:
+                while self.state.time < until_time and (
+                    max_events is None or self.state.events_processed < max_events
+                ):
                     event = self.step(until_time=until_time, trace_writer=trace_writer)
                     if event is None:
                         break
@@ -963,7 +965,9 @@ class GillespieQBPSimulator:
                         inventory_samples.append(self.state.total_inventory)
                         alpha_samples.append(self.state.total_scarcity)
         else:
-            while self.state.time < until_time and self.state.events_processed < max_events:
+            while self.state.time < until_time and (
+                max_events is None or self.state.events_processed < max_events
+            ):
                 event = self.step(until_time=until_time, trace_writer=trace_writer)
                 if event is None:
                     break
