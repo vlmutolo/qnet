@@ -482,7 +482,7 @@ def _build_parser() -> argparse.ArgumentParser:
     limited_parser.add_argument(
         "--headroom",
         type=float,
-        default=1.0,
+        default=1.01,
         help=(
             "Capacity multiplier applied at runtime to LP-derived generation rates, "
             "swap rates, and service opportunity rates. Demand rates are not scaled."

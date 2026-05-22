@@ -670,6 +670,21 @@ def test_capacity_headroom_scales_capacity_rates_not_demand_rates() -> None:
     assert np.allclose(runtime.swap_rates, np.asarray(input_config.swap_rates) * 1.05)
 
 
+def test_simulation_input_config_defaults_capacity_headroom_to_one_percent() -> None:
+    input_config = SimulationInputConfig(
+        generation_rates=[[0.0, 2.0], [2.0, 0.0]],
+        consumption_rates=[[0.0, 3.0], [3.0, 0.0]],
+        swap_rates=[5.0, 7.0],
+    )
+    runtime = input_config.to_runtime_config()
+
+    assert input_config.capacity_headroom == 1.01
+    assert np.allclose(runtime.generation_rates, np.asarray(input_config.generation_rates) * 1.01)
+    assert np.allclose(runtime.demand_rates, np.asarray(input_config.consumption_rates))
+    assert np.allclose(runtime.service_rates, np.asarray(input_config.consumption_rates) * 1.01)
+    assert np.allclose(runtime.swap_rates, np.asarray(input_config.swap_rates) * 1.01)
+
+
 def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(

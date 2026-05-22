@@ -62,7 +62,7 @@ class SimulationInputConfig(BaseModel):
         description="Per-node swap hazard rates."
     )
     capacity_headroom: float = Field(
-        default=1.0,
+        default=1.01,
         description=(
             "Multiplier applied to controllable capacity/opportunity rates at runtime: "
             "generation, swap, and service rates. Demand/consumption rates are not scaled."

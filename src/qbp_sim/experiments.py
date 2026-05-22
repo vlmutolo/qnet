@@ -118,7 +118,7 @@ def run_limited_info_service_ratio_experiment(
     cons_max_edge_weight: float = 7.0,
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
-    capacity_headroom: float = 1.0,
+    capacity_headroom: float = 1.01,
     progress: bool | None = None,
 ) -> list[LimitedInfoServiceRatioRun]:
     if sample_every <= 0:

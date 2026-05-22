@@ -56,9 +56,9 @@ JSON simulation input is validated with Pydantic and currently only needs:
 - `swap_rates`
 
 It may also include `capacity_headroom`, an optional multiplier for controllable capacity and
-opportunity rates. At runtime, `capacity_headroom` scales `generation_rates`, `swap_rates`, and
-service hazards, while leaving demand arrivals from `consumption_rates` unchanged. It may also
-include an optional virtual swap scheduler policy:
+opportunity rates. The default is `1.01`. At runtime, `capacity_headroom` scales
+`generation_rates`, `swap_rates`, and service hazards, while leaving demand arrivals from
+`consumption_rates` unchanged. It may also include an optional virtual swap scheduler policy:
 
 ```json
 {
