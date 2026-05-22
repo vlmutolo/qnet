@@ -113,6 +113,7 @@ def _write_run_metadata(
     max_events: int | None,
     sample_every: int,
     burn_in_time: float,
+    trace_float_precision: str,
     simulation_config_path: Path,
     trace_path: Path,
     lp_json_path: Path,
@@ -129,6 +130,7 @@ def _write_run_metadata(
         "max_events": max_events,
         "sample_every": sample_every,
         "burn_in_time": burn_in_time,
+        "trace_float_precision": trace_float_precision,
         "hit_time_horizon": result.final_time >= until_time,
         "hit_event_cap": (
             False if max_events is None else result.events_processed >= max_events and result.final_time < until_time
@@ -206,6 +208,7 @@ def run_limited_info_service_ratio_experiment(
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
     capacity_headroom: float = 1.01,
+    trace_float_precision: str = "float32",
     progress: bool | None = None,
 ) -> list[LimitedInfoServiceRatioRun]:
     if sample_every <= 0:
@@ -271,7 +274,7 @@ def run_limited_info_service_ratio_experiment(
 
         simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
         snapshot_writer = _MemorySnapshotWriter()
-        with open_event_trace_writer(trace_path) as trace_writer:
+        with open_event_trace_writer(trace_path, float_precision=trace_float_precision) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -289,6 +292,7 @@ def run_limited_info_service_ratio_experiment(
             max_events=max_events,
             sample_every=sample_every,
             burn_in_time=0.0,
+            trace_float_precision=trace_float_precision,
             simulation_config_path=simulation_config_path,
             trace_path=trace_path,
             lp_json_path=lp_json_path,
@@ -336,6 +340,7 @@ def run_cycle_service_ratio_experiment(
     cons_max_edge_weight: float = 7.0,
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
+    trace_float_precision: str = "float32",
     progress: bool | None = None,
 ) -> list[CycleServiceRatioRun]:
     if sample_every <= 0:
@@ -388,7 +393,7 @@ def run_cycle_service_ratio_experiment(
             simulator.reset_measurements(reset_time_origin=True)
             initial_state = _simulator_state_payload(simulator)
         snapshot_writer = _MemorySnapshotWriter()
-        with open_event_trace_writer(trace_path) as trace_writer:
+        with open_event_trace_writer(trace_path, float_precision=trace_float_precision) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -406,6 +411,7 @@ def run_cycle_service_ratio_experiment(
             max_events=max_events,
             sample_every=sample_every,
             burn_in_time=burn_in_time,
+            trace_float_precision=trace_float_precision,
             simulation_config_path=simulation_config_path,
             trace_path=trace_path,
             lp_json_path=lp_json_path,
@@ -444,6 +450,7 @@ def run_headroom_experiment(
     cons_max_edge_weight: float = 7.0,
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
+    trace_float_precision: str = "float32",
     progress: bool | None = None,
 ) -> list[HeadroomRun]:
     if sample_every <= 0:
@@ -501,7 +508,7 @@ def run_headroom_experiment(
             simulator.reset_measurements(reset_time_origin=True)
             initial_state = _simulator_state_payload(simulator)
         snapshot_writer = _MemorySnapshotWriter()
-        with open_event_trace_writer(trace_path) as trace_writer:
+        with open_event_trace_writer(trace_path, float_precision=trace_float_precision) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -519,6 +526,7 @@ def run_headroom_experiment(
             max_events=max_events,
             sample_every=sample_every,
             burn_in_time=burn_in_time,
+            trace_float_precision=trace_float_precision,
             simulation_config_path=simulation_config_path,
             trace_path=trace_path,
             lp_json_path=lp_json_path,

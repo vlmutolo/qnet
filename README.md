@@ -169,6 +169,11 @@ Write a compact Vortex event trace:
 uv run qbp-sim example --until 100 --trace output/traces/run-001.vortex
 ```
 
+Columnar event traces (`.vortex` and `.parquet`) store `time`, `total_rate`, and
+`event_rate` as `float32` by default. Use `--trace-float-precision float64` when
+you need full precision, or `float16` only for short runs whose time/rate values
+fit in fp16 range.
+
 Write sampled snapshots:
 
 ```bash

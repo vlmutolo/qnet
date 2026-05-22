@@ -8,10 +8,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from qbp_sim.config import SimulationInputConfig
+from qbp_sim.events import QBPEvent
 from qbp_sim.examples import build_four_node_counterexample
 from qbp_sim.experiments import (
     _apply_capacity_headroom,
@@ -553,6 +555,7 @@ def test_parquet_trace_writer_records_every_event_and_replays(tmp_path) -> None:
     parquet_columns = set(pq.ParquetFile(trace_path).schema_arrow.names)
     assert "time" in parquet_columns
     assert "dt" not in parquet_columns
+    assert pq.ParquetFile(trace_path).schema_arrow.field("time").type == pa.float32()
     assert len(events) == original.events_processed
     assert events[0].event_index == 1
     assert events[0].dt == events[0].time
@@ -570,6 +573,28 @@ def test_parquet_trace_writer_records_every_event_and_replays(tmp_path) -> None:
     assert replayed.total_backlog == original.total_backlog
     assert replayed.total_inventory == original.total_inventory
     assert replayed.total_scarcity == original.total_scarcity
+
+
+def test_trace_float16_rejects_out_of_range_time(tmp_path) -> None:
+    trace_path = tmp_path / "events.vortex"
+    writer = open_event_trace_writer(trace_path, float_precision="float16")
+    with pytest.raises(ValueError, match="exceeds float16 range"):
+        with writer as trace_writer:
+            trace_writer.write(
+                QBPEvent(
+                    event_index=1,
+                    time=70_000.0,
+                    dt=70_000.0,
+                    total_rate=1.0,
+                    event_type="demand_arrival",
+                    event_rate=1.0,
+                    x=0,
+                    y=1,
+                    backlog_total=1,
+                    inventory_total=0,
+                    scarcity_total=0,
+                )
+            )
 
 
 def test_vortex_trace_writer_records_every_event_and_replays(tmp_path) -> None:

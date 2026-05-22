@@ -30,23 +30,61 @@ TRACE_COLUMNS = (
     "scarcity_total",
 )
 
-TRACE_SCHEMA = pa.schema(
-    [
-        ("event_index", pa.int64()),
-        ("time", pa.float64()),
-        ("total_rate", pa.float64()),
-        ("event_type", pa.string()),
-        ("event_rate", pa.float64()),
-        ("swap_idx", pa.int64()),
-        ("x", pa.int64()),
-        ("y", pa.int64()),
-        ("z", pa.int64()),
-        ("i", pa.int64()),
-        ("backlog_total", pa.int64()),
-        ("inventory_total", pa.int64()),
-        ("scarcity_total", pa.int64()),
-    ]
-)
+DEFAULT_TRACE_FLOAT_PRECISION = "float32"
+TRACE_FLOAT_TYPES = {
+    "float16": pa.float16(),
+    "float32": pa.float32(),
+    "float64": pa.float64(),
+}
+FLOAT16_MAX_FINITE = 65_504.0
+
+
+def trace_schema(float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION) -> pa.Schema:
+    float_type = _trace_float_type(float_precision)
+    return pa.schema(
+        [
+            ("event_index", pa.int64()),
+            ("time", float_type),
+            ("total_rate", float_type),
+            ("event_type", pa.string()),
+            ("event_rate", float_type),
+            ("swap_idx", pa.int64()),
+            ("x", pa.int64()),
+            ("y", pa.int64()),
+            ("z", pa.int64()),
+            ("i", pa.int64()),
+            ("backlog_total", pa.int64()),
+            ("inventory_total", pa.int64()),
+            ("scarcity_total", pa.int64()),
+        ]
+    )
+
+
+def _trace_float_type(float_precision: str) -> pa.DataType:
+    normalized = float_precision.lower()
+    try:
+        return TRACE_FLOAT_TYPES[normalized]
+    except KeyError as exc:
+        allowed = ", ".join(sorted(TRACE_FLOAT_TYPES))
+        raise ValueError(f"float_precision must be one of: {allowed}.") from exc
+
+
+def _validate_float_columns(
+    columns: dict[str, list[int | float | str | None]],
+    *,
+    float_precision: str,
+) -> None:
+    if float_precision != "float16":
+        return
+    for column in ("time", "total_rate", "event_rate"):
+        for value in columns[column]:
+            if value is not None and abs(float(value)) > FLOAT16_MAX_FINITE:
+                raise ValueError(
+                    f"{column} value {value!r} exceeds float16 range; use float32 or float64 trace precision."
+                )
+
+
+TRACE_SCHEMA = trace_schema("float64")
 
 
 class EventTraceWriter:
@@ -94,12 +132,15 @@ class ParquetEventTraceWriter:
         *,
         buffer_size: int = 65_536,
         compression: str = "zstd",
+        float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
     ) -> None:
         if buffer_size <= 0:
             raise ValueError("buffer_size must be positive.")
         self.path = Path(path)
         self.buffer_size = buffer_size
         self.compression = compression
+        self.float_precision = float_precision.lower()
+        self.schema = trace_schema(self.float_precision)
         self._writer: pq.ParquetWriter | None = None
         self._columns: dict[str, list[int | float | str | None]] = self._new_column_buffer()
         self._row_count = 0
@@ -111,7 +152,7 @@ class ParquetEventTraceWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._writer = pq.ParquetWriter(
             self.path,
-            TRACE_SCHEMA,
+            self.schema,
             compression=self.compression,
             use_dictionary=["event_type"],
         )
@@ -146,7 +187,8 @@ class ParquetEventTraceWriter:
             raise RuntimeError("Parquet trace writer must be opened with a context manager before use.")
         if self._row_count == 0:
             return
-        table = pa.Table.from_pydict(self._columns, schema=TRACE_SCHEMA)
+        _validate_float_columns(self._columns, float_precision=self.float_precision)
+        table = pa.Table.from_pydict(self._columns, schema=self.schema)
         self._writer.write_table(table)
         self._columns = self._new_column_buffer()
         self._row_count = 0
@@ -161,7 +203,14 @@ class ParquetEventTraceWriter:
 class VortexEventTraceWriter:
     """Write events into a buffered compact Vortex file for replay and columnar analysis."""
 
-    def __init__(self, path: str | Path, *, buffer_size: int = 65_536, queue_size: int = 8) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        buffer_size: int = 65_536,
+        queue_size: int = 8,
+        float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
+    ) -> None:
         if buffer_size <= 0:
             raise ValueError("buffer_size must be positive.")
         if queue_size <= 0:
@@ -169,6 +218,8 @@ class VortexEventTraceWriter:
         self.path = Path(path)
         self.buffer_size = buffer_size
         self.queue_size = queue_size
+        self.float_precision = float_precision.lower()
+        self.schema = trace_schema(self.float_precision)
         self._columns: dict[str, list[int | float | str | None]] = self._new_column_buffer()
         self._row_count = 0
         self._batch_queue: queue.Queue[pa.RecordBatch | None] | None = None
@@ -218,7 +269,8 @@ class VortexEventTraceWriter:
         self._raise_writer_error()
         if self._row_count == 0:
             return
-        table = pa.Table.from_pydict(self._columns, schema=TRACE_SCHEMA)
+        _validate_float_columns(self._columns, float_precision=self.float_precision)
+        table = pa.Table.from_pydict(self._columns, schema=self.schema)
         batches = table.to_batches(max_chunksize=self._row_count)
         if len(batches) != 1:
             raise RuntimeError("Expected a single event-trace batch.")
@@ -255,7 +307,7 @@ class VortexEventTraceWriter:
 
     def _write_batches(self) -> None:
         try:
-            reader = pa.RecordBatchReader.from_batches(TRACE_SCHEMA, self._iter_batches())
+            reader = pa.RecordBatchReader.from_batches(self.schema, self._iter_batches())
             vx.io.VortexWriteOptions.compact().write(reader, str(self.path))
         except BaseException as exc:
             self._writer_error = exc
@@ -367,13 +419,17 @@ class VortexEventTraceReader:
         self._reader = None
 
 
-def open_event_trace_writer(path: str | Path):
+def open_event_trace_writer(
+    path: str | Path,
+    *,
+    float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
+):
     trace_path = Path(path)
     suffix = trace_path.suffix.lower()
     if suffix == ".vortex":
-        return VortexEventTraceWriter(trace_path)
+        return VortexEventTraceWriter(trace_path, float_precision=float_precision)
     if suffix == ".parquet":
-        return ParquetEventTraceWriter(trace_path)
+        return ParquetEventTraceWriter(trace_path, float_precision=float_precision)
     return EventTraceWriter(trace_path)
 
 

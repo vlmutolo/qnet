@@ -98,6 +98,18 @@ def _max_events_limit(value: int) -> int | None:
     return None if value <= 0 else value
 
 
+def _add_trace_float_precision_arg(command_parser: argparse.ArgumentParser) -> None:
+    command_parser.add_argument(
+        "--trace-float-precision",
+        choices=("float16", "float32", "float64"),
+        default="float32",
+        help=(
+            "Floating-point precision for columnar event traces. "
+            "float32 is the default; float16 is only suitable when time/rate values stay within fp16 range."
+        ),
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qbp-sim",
@@ -137,6 +149,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
+    _add_trace_float_precision_arg(run_parser)
     run_parser.add_argument(
         "--snapshots",
         type=Path,
@@ -171,6 +184,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTFILE",
         help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
+    _add_trace_float_precision_arg(example_parser)
     example_parser.add_argument(
         "--snapshots",
         type=Path,
@@ -311,6 +325,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTDIR",
         help="Directory to write LP outputs, simulation configs, compact Vortex event traces, and run metadata.",
     )
+    _add_trace_float_precision_arg(cycle_parser)
     cycle_parser.add_argument(
         "--plot-out",
         type=Path,
@@ -406,6 +421,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTDIR",
         help="Directory to write LP outputs, headroom configs, compact Vortex event traces, and run metadata.",
     )
+    _add_trace_float_precision_arg(headroom_parser)
     headroom_parser.add_argument(
         "--plot-out",
         type=Path,
@@ -499,6 +515,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="OUTDIR",
         help="Directory to write LP outputs, policy configs, compact Vortex event traces, and run metadata.",
     )
+    _add_trace_float_precision_arg(limited_parser)
     limited_parser.add_argument(
         "--plot-out",
         type=Path,
@@ -526,7 +543,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=_max_events_limit(args.max_events), sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
-            with open_event_trace_writer(args.trace) as trace_writer:
+            with open_event_trace_writer(args.trace, float_precision=args.trace_float_precision) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=_max_events_limit(args.max_events),
@@ -542,7 +559,9 @@ def main(argv: list[str] | None = None) -> None:
                     snapshot_writer=snapshot_writer,
                 )
         else:
-            with open_event_trace_writer(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
+            with open_event_trace_writer(
+                args.trace, float_precision=args.trace_float_precision
+            ) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=_max_events_limit(args.max_events),
@@ -567,7 +586,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=_max_events_limit(args.max_events), sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
-            with open_event_trace_writer(args.trace) as trace_writer:
+            with open_event_trace_writer(args.trace, float_precision=args.trace_float_precision) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=_max_events_limit(args.max_events),
@@ -583,7 +602,9 @@ def main(argv: list[str] | None = None) -> None:
                     snapshot_writer=snapshot_writer,
                 )
         else:
-            with open_event_trace_writer(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
+            with open_event_trace_writer(
+                args.trace, float_precision=args.trace_float_precision
+            ) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=_max_events_limit(args.max_events),
@@ -653,6 +674,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_scale=args.cons_scale,
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
+            trace_float_precision=args.trace_float_precision,
         )
         plot_cycle_service_ratio_runs(runs, args.plot_out)
         print("Cycle service-gap experiment")
@@ -678,6 +700,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_scale=args.cons_scale,
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
+            trace_float_precision=args.trace_float_precision,
         )
         plot_headroom_runs(runs, args.plot_out)
         print("Headroom service-gap experiment")
@@ -704,6 +727,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
             capacity_headroom=args.headroom,
+            trace_float_precision=args.trace_float_precision,
         )
         plot_limited_info_service_ratio_runs(runs, args.plot_out, plot_start_time=args.plot_start_time)
         print("Limited-info service-ratio experiment")
