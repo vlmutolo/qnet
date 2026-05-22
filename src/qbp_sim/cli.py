@@ -305,7 +305,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output/cycle_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs and BP snapshots.",
+        help="Directory to write LP outputs, simulation configs, Parquet event traces, and run metadata.",
     )
     cycle_parser.add_argument(
         "--plot-out",
@@ -400,7 +400,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output/headroom_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs, headroom configs, and BP snapshots.",
+        help="Directory to write LP outputs, headroom configs, Parquet event traces, and run metadata.",
     )
     headroom_parser.add_argument(
         "--plot-out",
@@ -493,7 +493,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output/limited_info_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs, policy configs, and snapshots.",
+        help="Directory to write LP outputs, policy configs, Parquet event traces, and run metadata.",
     )
     limited_parser.add_argument(
         "--plot-out",
@@ -657,7 +657,7 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 f"n={run.n_nodes} final_time={summary.final_time:.3f} "
                 f"final_service_ratio={summary.final_service_ratio:.6f} "
-                f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
+                f"samples={summary.num_snapshots} trace_path={run.trace_path} metadata_path={run.metadata_path}"
             )
         print(f"\nWrote plot to {args.plot_out}")
     if args.command == "headroom-service-ratio":
@@ -683,7 +683,7 @@ def main(argv: list[str] | None = None) -> None:
                 f"n={run.n_nodes} capacity_headroom={run.capacity_headroom:g} "
                 f"final_time={summary.final_time:.3f} "
                 f"final_service_ratio={summary.final_service_ratio:.6f} "
-                f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
+                f"samples={summary.num_snapshots} trace_path={run.trace_path} metadata_path={run.metadata_path}"
             )
         print(f"\nWrote plot to {args.plot_out}")
     if args.command == "limited-info-service-ratio":
@@ -709,6 +709,6 @@ def main(argv: list[str] | None = None) -> None:
                 f"n={run.n_nodes} policy={run.policy_label} "
                 f"final_time={summary.final_time:.3f} "
                 f"final_service_ratio={summary.final_service_ratio:.6f} "
-                f"snapshots={summary.num_snapshots} snapshots_path={run.snapshots_path}"
+                f"samples={summary.num_snapshots} trace_path={run.trace_path} metadata_path={run.metadata_path}"
             )
         print(f"\nWrote plot to {args.plot_out}")

@@ -107,7 +107,10 @@ The simulator is split into two systems:
 
 That separation is intentional. It keeps event generation and state mutation decoupled, and it makes replay straightforward because a saved event log can be fed directly into the applier without resampling randomness.
 
-Snapshots are a separate artifact type:
+Experiment commands write durable per-run artifacts as `events.parquet`, `simulation_config.json`,
+and `run_metadata.json`. Plots produced by those commands use sampled snapshots in memory, but do
+not save snapshot checkpoint files. Snapshots are still available as an explicit lower-level CLI
+artifact type:
 
 - traces are per-event logs for replay
 - snapshots are sampled aggregates for analysis and plotting

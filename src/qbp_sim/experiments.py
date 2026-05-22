@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,8 +11,9 @@ import numpy as np
 
 from qbp_sim.analysis import save_chart, summarize_snapshots
 from qbp_sim.config import SimulationInputConfig, VirtualSwapPolicyConfig
-from qbp_sim.simulator import GillespieQBPSimulator
-from qbp_sim.snapshots import QBPSnapshot, SnapshotReader, SnapshotWriter
+from qbp_sim.simulator import GillespieQBPResult, GillespieQBPSimulator
+from qbp_sim.snapshots import QBPSnapshot
+from qbp_sim.trace import ParquetEventTraceWriter
 
 
 @dataclass(slots=True)
@@ -19,7 +21,8 @@ class CycleServiceRatioRun:
     n_nodes: int
     lp_json_path: Path
     simulation_config_path: Path
-    snapshots_path: Path
+    trace_path: Path
+    metadata_path: Path
     snapshots: list[QBPSnapshot]
 
     @property
@@ -33,7 +36,8 @@ class HeadroomRun:
     capacity_headroom: float
     lp_json_path: Path
     simulation_config_path: Path
-    snapshots_path: Path
+    trace_path: Path
+    metadata_path: Path
     snapshots: list[QBPSnapshot]
 
     @property
@@ -50,12 +54,93 @@ class LimitedInfoServiceRatioRun:
     memory: int | None
     lp_json_path: Path
     simulation_config_path: Path
-    snapshots_path: Path
+    trace_path: Path
+    metadata_path: Path
     snapshots: list[QBPSnapshot]
 
     @property
     def summary(self):
         return summarize_snapshots(self.snapshots)
+
+
+class _MemorySnapshotWriter:
+    def __init__(self) -> None:
+        self.snapshots: list[QBPSnapshot] = []
+
+    def write(self, snapshot: QBPSnapshot) -> None:
+        self.snapshots.append(snapshot)
+
+
+def _simulator_state_payload(simulator: GillespieQBPSimulator) -> dict[str, list]:
+    state = simulator.state
+    return {
+        "q": state.q.tolist(),
+        "d": state.d.tolist(),
+        "alpha": state.alpha.tolist(),
+        "h_r": state.h_r.tolist(),
+        "h_mu": state.h_mu.tolist(),
+    }
+
+
+def _result_payload(result: GillespieQBPResult) -> dict[str, int | float | bool]:
+    return {
+        "final_time": result.final_time,
+        "events_processed": result.events_processed,
+        "total_backlog": result.total_backlog,
+        "total_inventory": result.total_inventory,
+        "total_scarcity": result.total_scarcity,
+        "demand_arrivals": result.demand_arrivals,
+        "pair_generations": result.pair_generations,
+        "virtual_service_requests": result.virtual_service_requests,
+        "virtual_swap_requests": result.virtual_swap_requests,
+        "services_completed": result.services_completed,
+        "swaps_completed": result.swaps_completed,
+        "service_ratio": (
+            0.0
+            if result.demand_arrivals == 0
+            else float(result.services_completed) / float(result.demand_arrivals)
+        ),
+    }
+
+
+def _write_run_metadata(
+    path: str | Path,
+    *,
+    command: str,
+    n_nodes: int,
+    seed: int,
+    until_time: float,
+    max_events: int,
+    sample_every: int,
+    burn_in_time: float,
+    simulation_config_path: Path,
+    trace_path: Path,
+    lp_json_path: Path,
+    result: GillespieQBPResult,
+    initial_state: dict[str, list] | None = None,
+    extra: dict[str, int | float | str | bool | None] | None = None,
+) -> None:
+    metadata = {
+        "schema_version": 1,
+        "command": command,
+        "n_nodes": n_nodes,
+        "seed": seed,
+        "until_time": until_time,
+        "max_events": max_events,
+        "sample_every": sample_every,
+        "burn_in_time": burn_in_time,
+        "hit_time_horizon": result.final_time >= until_time,
+        "hit_event_cap": result.events_processed >= max_events and result.final_time < until_time,
+        "simulation_config_path": str(simulation_config_path),
+        "trace_path": str(trace_path),
+        "lp_json_path": str(lp_json_path),
+        "trace_format": "parquet",
+        "result": _result_payload(result),
+        "initial_state": initial_state,
+        "extra": extra or {},
+    }
+    metadata_path = Path(path)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
 def _load_linear_module():
@@ -178,20 +263,42 @@ def run_limited_info_service_ratio_experiment(
         case_dir = base_dir / _policy_slug(policy_label)
         case_dir.mkdir(parents=True, exist_ok=True)
         simulation_config_path = case_dir / "simulation_config.json"
-        snapshots_path = case_dir / "snapshots.jsonl.zst"
+        trace_path = case_dir / "events.parquet"
+        metadata_path = case_dir / "run_metadata.json"
         simulation_config_path.write_text(simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
         simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
-        with SnapshotWriter(snapshots_path) as snapshot_writer:
-            simulator.run(
+        snapshot_writer = _MemorySnapshotWriter()
+        with ParquetEventTraceWriter(trace_path) as trace_writer:
+            result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
                 sample_every=sample_every,
+                trace_writer=trace_writer,
                 snapshot_writer=snapshot_writer,
                 progress=progress,
             )
-        with SnapshotReader(snapshots_path) as snapshot_reader:
-            snapshots = list(snapshot_reader)
+        _write_run_metadata(
+            metadata_path,
+            command="limited-info-service-ratio",
+            n_nodes=n_nodes,
+            seed=run_seed,
+            until_time=until_time,
+            max_events=max_events,
+            sample_every=sample_every,
+            burn_in_time=0.0,
+            simulation_config_path=simulation_config_path,
+            trace_path=trace_path,
+            lp_json_path=lp_json_path,
+            result=result,
+            extra={
+                "policy_label": policy_label,
+                "policy_mode": policy_mode,
+                "k": k,
+                "memory": memory,
+                "capacity_headroom": simulation_input.capacity_headroom,
+            },
+        )
 
         runs.append(
             LimitedInfoServiceRatioRun(
@@ -202,8 +309,9 @@ def run_limited_info_service_ratio_experiment(
                 memory=memory,
                 lp_json_path=lp_json_path,
                 simulation_config_path=simulation_config_path,
-                snapshots_path=snapshots_path,
-                snapshots=snapshots,
+                trace_path=trace_path,
+                metadata_path=metadata_path,
+                snapshots=snapshot_writer.snapshots,
             )
         )
 
@@ -241,7 +349,8 @@ def run_cycle_service_ratio_experiment(
         case_dir.mkdir(parents=True, exist_ok=True)
         lp_json_path = case_dir / "lp_solution.json"
         simulation_config_path = case_dir / "simulation_config.json"
-        snapshots_path = case_dir / "bp_snapshots.jsonl.zst"
+        trace_path = case_dir / "events.parquet"
+        metadata_path = case_dir / "run_metadata.json"
         run_seed = seed_base + n_nodes
         run_cons_edge_fraction = _cycle_consumption_edge_fraction(n_nodes, cons_edge_fraction)
 
@@ -266,6 +375,7 @@ def run_cycle_service_ratio_experiment(
             raise RuntimeError(f"LP solve failed for cycle n={n_nodes}.")
 
         simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
+        initial_state = None
         if burn_in_time > 0.0:
             simulator.run(
                 until_time=burn_in_time,
@@ -274,24 +384,41 @@ def run_cycle_service_ratio_experiment(
                 progress=progress,
             )
             simulator.reset_measurements(reset_time_origin=True)
-        with SnapshotWriter(snapshots_path) as snapshot_writer:
-            simulator.run(
+            initial_state = _simulator_state_payload(simulator)
+        snapshot_writer = _MemorySnapshotWriter()
+        with ParquetEventTraceWriter(trace_path) as trace_writer:
+            result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
                 sample_every=sample_every,
+                trace_writer=trace_writer,
                 snapshot_writer=snapshot_writer,
                 progress=progress,
             )
-        with SnapshotReader(snapshots_path) as snapshot_reader:
-            snapshots = list(snapshot_reader)
+        _write_run_metadata(
+            metadata_path,
+            command="cycle-service-ratio",
+            n_nodes=n_nodes,
+            seed=run_seed,
+            until_time=until_time,
+            max_events=max_events,
+            sample_every=sample_every,
+            burn_in_time=burn_in_time,
+            simulation_config_path=simulation_config_path,
+            trace_path=trace_path,
+            lp_json_path=lp_json_path,
+            result=result,
+            initial_state=initial_state,
+        )
 
         runs.append(
             CycleServiceRatioRun(
                 n_nodes=n_nodes,
                 lp_json_path=lp_json_path,
                 simulation_config_path=simulation_config_path,
-                snapshots_path=snapshots_path,
-                snapshots=snapshots,
+                trace_path=trace_path,
+                metadata_path=metadata_path,
+                snapshots=snapshot_writer.snapshots,
             )
         )
 
@@ -355,11 +482,13 @@ def run_headroom_experiment(
         case_dir = base_dir / f"headroom_{_headroom_slug(headroom)}"
         case_dir.mkdir(parents=True, exist_ok=True)
         simulation_config_path = case_dir / "simulation_config.json"
-        snapshots_path = case_dir / "bp_snapshots.jsonl.zst"
+        trace_path = case_dir / "events.parquet"
+        metadata_path = case_dir / "run_metadata.json"
         headroom_input = _apply_capacity_headroom(base_simulation_input, headroom)
         simulation_config_path.write_text(headroom_input.model_dump_json(indent=2))
 
         simulator = GillespieQBPSimulator(config=headroom_input.to_runtime_config(), seed=run_seed)
+        initial_state = None
         if burn_in_time > 0.0:
             simulator.run(
                 until_time=burn_in_time,
@@ -368,16 +497,33 @@ def run_headroom_experiment(
                 progress=progress,
             )
             simulator.reset_measurements(reset_time_origin=True)
-        with SnapshotWriter(snapshots_path) as snapshot_writer:
-            simulator.run(
+            initial_state = _simulator_state_payload(simulator)
+        snapshot_writer = _MemorySnapshotWriter()
+        with ParquetEventTraceWriter(trace_path) as trace_writer:
+            result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
                 sample_every=sample_every,
+                trace_writer=trace_writer,
                 snapshot_writer=snapshot_writer,
                 progress=progress,
             )
-        with SnapshotReader(snapshots_path) as snapshot_reader:
-            snapshots = list(snapshot_reader)
+        _write_run_metadata(
+            metadata_path,
+            command="headroom-service-ratio",
+            n_nodes=n_nodes,
+            seed=run_seed,
+            until_time=until_time,
+            max_events=max_events,
+            sample_every=sample_every,
+            burn_in_time=burn_in_time,
+            simulation_config_path=simulation_config_path,
+            trace_path=trace_path,
+            lp_json_path=lp_json_path,
+            result=result,
+            initial_state=initial_state,
+            extra={"capacity_headroom": headroom},
+        )
 
         runs.append(
             HeadroomRun(
@@ -385,8 +531,9 @@ def run_headroom_experiment(
                 capacity_headroom=headroom,
                 lp_json_path=lp_json_path,
                 simulation_config_path=simulation_config_path,
-                snapshots_path=snapshots_path,
-                snapshots=snapshots,
+                trace_path=trace_path,
+                metadata_path=metadata_path,
+                snapshots=snapshot_writer.snapshots,
             )
         )
 

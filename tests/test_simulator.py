@@ -644,7 +644,7 @@ def test_altair_snapshot_plots_render_to_png(tmp_path) -> None:
     assert series_plot_path.stat().st_size > 0
 
 
-def test_limited_info_service_ratio_experiment_writes_snapshots_and_plot(tmp_path) -> None:
+def test_limited_info_service_ratio_experiment_writes_events_metadata_and_plot(tmp_path) -> None:
     runs = run_limited_info_service_ratio_experiment(
         n_nodes=4,
         limited_policies=[(1, 1)],
@@ -660,7 +660,9 @@ def test_limited_info_service_ratio_experiment_writes_snapshots_and_plot(tmp_pat
 
     assert [run.policy_label for run in runs] == ["full info", "limited k=1, m=1"]
     assert all(run.snapshots for run in runs)
-    assert all(run.snapshots_path.exists() for run in runs)
+    assert all(run.trace_path.exists() for run in runs)
+    assert all(run.trace_path.suffix == ".parquet" for run in runs)
+    assert all(run.metadata_path.exists() for run in runs)
     assert all(run.simulation_config_path.exists() for run in runs)
     assert all(0.0 <= run.summary.final_service_ratio <= 1.0 for run in runs)
     assert plot_path.exists()
