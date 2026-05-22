@@ -24,7 +24,7 @@ from qbp_sim.simulator import (
     replay_event_stream,
 )
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
-from qbp_sim.trace import EventTraceReader, EventTraceWriter
+from qbp_sim.trace import open_event_trace_reader, open_event_trace_writer
 
 
 def _add_virtual_swap_policy_args(command_parser: argparse.ArgumentParser) -> None:
@@ -131,7 +131,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="OUTFILE",
-        help="Write every event as JSONL into a Zstandard-compressed trace file.",
+        help="Write every event to a trace file. Use .parquet for buffered Parquet or .jsonl.zst for compressed JSONL.",
     )
     run_parser.add_argument(
         "--snapshots",
@@ -165,7 +165,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="OUTFILE",
-        help="Write every event as JSONL into a Zstandard-compressed trace file.",
+        help="Write every event to a trace file. Use .parquet for buffered Parquet or .jsonl.zst for compressed JSONL.",
     )
     example_parser.add_argument(
         "--snapshots",
@@ -185,7 +185,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         metavar="INFILE",
-        help="Read a Zstandard-compressed JSONL event trace to replay.",
+        help="Read a .parquet or .jsonl.zst event trace to replay.",
     )
     replay_parser.add_argument(
         "--sample-every",
@@ -522,7 +522,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=args.max_events, sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
-            with EventTraceWriter(args.trace) as trace_writer:
+            with open_event_trace_writer(args.trace) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=args.max_events,
@@ -538,7 +538,7 @@ def main(argv: list[str] | None = None) -> None:
                     snapshot_writer=snapshot_writer,
                 )
         else:
-            with EventTraceWriter(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
+            with open_event_trace_writer(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=args.max_events,
@@ -563,7 +563,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=args.max_events, sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
-            with EventTraceWriter(args.trace) as trace_writer:
+            with open_event_trace_writer(args.trace) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=args.max_events,
@@ -579,7 +579,7 @@ def main(argv: list[str] | None = None) -> None:
                     snapshot_writer=snapshot_writer,
                 )
         else:
-            with EventTraceWriter(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
+            with open_event_trace_writer(args.trace) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=args.max_events,
@@ -600,7 +600,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "replay":
         config = build_four_node_counterexample()
         if args.snapshots is None:
-            with EventTraceReader(args.trace) as trace_reader:
+            with open_event_trace_reader(args.trace) as trace_reader:
                 result = replay_event_stream(
                     config=config,
                     events=trace_reader,
@@ -608,7 +608,7 @@ def main(argv: list[str] | None = None) -> None:
                     final_time=args.until,
                 )
         else:
-            with EventTraceReader(args.trace) as trace_reader, SnapshotWriter(args.snapshots) as snapshot_writer:
+            with open_event_trace_reader(args.trace) as trace_reader, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = replay_event_stream(
                     config=config,
                     events=trace_reader,

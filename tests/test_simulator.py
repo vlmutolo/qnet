@@ -23,7 +23,7 @@ from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 import qbp_sim.simulator as simulator_module
 from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator, VirtualSwapPolicy, replay_event_stream
-from qbp_sim.trace import EventTraceReader, EventTraceWriter
+from qbp_sim.trace import EventTraceReader, EventTraceWriter, open_event_trace_reader, open_event_trace_writer
 
 
 RUN_GATED_TESTS = os.environ.get("QBP_SIM_RUN_GATED_TESTS") == "1"
@@ -528,6 +528,35 @@ def test_trace_writer_records_every_event(tmp_path) -> None:
     assert len(lines) == result.events_processed
     assert all("event_type" in line for line in lines)
     assert all("time" in line for line in lines)
+
+
+def test_parquet_trace_writer_records_every_event_and_replays(tmp_path) -> None:
+    trace_path = tmp_path / "events.parquet"
+    config = build_four_node_counterexample()
+    sim = GillespieQBPSimulator(config, seed=131)
+
+    with open_event_trace_writer(trace_path) as trace_writer:
+        original = sim.run(until_time=2.0, max_events=400, sample_every=25, trace_writer=trace_writer)
+
+    with open_event_trace_reader(trace_path) as trace_reader:
+        events = list(trace_reader)
+
+    assert len(events) == original.events_processed
+    assert events[0].event_index == 1
+    assert events[-1].event_index == original.events_processed
+    assert events[-1].inventory_total == original.total_inventory
+
+    replayed = replay_event_stream(
+        config=config,
+        events=events,
+        sample_every=25,
+        final_time=original.final_time,
+    )
+    assert replayed.final_time == original.final_time
+    assert replayed.events_processed == original.events_processed
+    assert replayed.total_backlog == original.total_backlog
+    assert replayed.total_inventory == original.total_inventory
+    assert replayed.total_scarcity == original.total_scarcity
 
 
 def test_replay_reproduces_summary_from_trace(tmp_path) -> None:

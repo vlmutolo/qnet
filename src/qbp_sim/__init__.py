@@ -18,11 +18,20 @@ from qbp_sim.simulator import QBPEventApplier, GillespieQBPEventProducer
 from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPResult, GillespieQBPSimulator, VirtualSwapPolicy
 from qbp_sim.simulator import QBPState, replay_event_stream
 from qbp_sim.snapshots import QBPSnapshot, SnapshotReader, SnapshotWriter
-from qbp_sim.trace import EventTraceReader, EventTraceWriter
+from qbp_sim.trace import (
+    EventTraceReader,
+    EventTraceWriter,
+    ParquetEventTraceReader,
+    ParquetEventTraceWriter,
+    open_event_trace_reader,
+    open_event_trace_writer,
+)
 
 __all__ = [
     "EventTraceReader",
     "EventTraceWriter",
+    "ParquetEventTraceReader",
+    "ParquetEventTraceWriter",
     "CycleServiceRatioRun",
     "HeadroomRun",
     "LimitedInfoServiceRatioRun",
@@ -41,6 +50,8 @@ __all__ = [
     "SnapshotWriter",
     "main",
     "load_simulation_config",
+    "open_event_trace_reader",
+    "open_event_trace_writer",
     "plot_snapshot_metric",
     "plot_cycle_service_ratio_runs",
     "plot_headroom_runs",

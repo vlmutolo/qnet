@@ -16,9 +16,9 @@ Always use `uv` here.
 uv sync --all-groups
 uv run qbp-sim run --config configs/example.json --until 50
 uv run qbp-sim example --until 50 --seed 0
-uv run qbp-sim example --until 50 --trace output/traces/example.jsonl.zst
+uv run qbp-sim example --until 50 --trace output/traces/example.parquet
 uv run qbp-sim example --until 50 --snapshots output/snapshots/example.jsonl.zst
-uv run qbp-sim replay --trace output/traces/example.jsonl.zst
+uv run qbp-sim replay --trace output/traces/example.parquet
 uv run qbp-sim analyze --snapshots output/snapshots/example.jsonl.zst
 uv run pytest
 ```
@@ -120,7 +120,7 @@ Simulation, replay, and analysis are therefore mostly orthogonal modes.
 - `src/qbp_sim/events.py`: concrete event record type
 - `src/qbp_sim/config.py`: Pydantic JSON input config and runtime conversion
 - `src/qbp_sim/examples.py`: built-in example networks
-- `src/qbp_sim/trace.py`: compressed trace writer and reader
+- `src/qbp_sim/trace.py`: compressed JSONL and buffered Parquet trace writers/readers
 - `src/qbp_sim/snapshots.py`: compressed snapshot writer and reader
 - `src/qbp_sim/analysis.py`: snapshot summaries and plotting
 - `src/qbp_sim/cli.py`: command-line entry point
@@ -160,10 +160,10 @@ Compare service-gap decay under different capacity-headroom multipliers:
 uv run qbp-sim headroom-service-ratio --n 16 --until 10000 --headrooms 1.0 1.01 1.05
 ```
 
-Write a compressed event trace:
+Write a buffered Parquet event trace:
 
 ```bash
-uv run qbp-sim example --until 100 --trace output/traces/run-001.jsonl.zst
+uv run qbp-sim example --until 100 --trace output/traces/run-001.parquet
 ```
 
 Write sampled snapshots:
@@ -175,7 +175,7 @@ uv run qbp-sim example --until 100 --sample-every 100 --snapshots output/snapsho
 Replay a saved event trace:
 
 ```bash
-uv run qbp-sim replay --trace output/traces/run-001.jsonl.zst
+uv run qbp-sim replay --trace output/traces/run-001.parquet
 ```
 
 Analyze snapshots and print a summary:
