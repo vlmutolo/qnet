@@ -13,7 +13,7 @@ from qbp_sim.analysis import save_chart, summarize_snapshots
 from qbp_sim.config import SimulationInputConfig, VirtualSwapPolicyConfig
 from qbp_sim.simulator import GillespieQBPResult, GillespieQBPSimulator
 from qbp_sim.snapshots import QBPSnapshot
-from qbp_sim.trace import ParquetEventTraceWriter
+from qbp_sim.trace import open_event_trace_writer
 
 
 @dataclass(slots=True)
@@ -136,7 +136,7 @@ def _write_run_metadata(
         "simulation_config_path": str(simulation_config_path),
         "trace_path": str(trace_path),
         "lp_json_path": str(lp_json_path),
-        "trace_format": "parquet",
+        "trace_format": trace_path.suffix.lstrip("."),
         "result": _result_payload(result),
         "initial_state": initial_state,
         "extra": extra or {},
@@ -265,13 +265,13 @@ def run_limited_info_service_ratio_experiment(
         case_dir = base_dir / _policy_slug(policy_label)
         case_dir.mkdir(parents=True, exist_ok=True)
         simulation_config_path = case_dir / "simulation_config.json"
-        trace_path = case_dir / "events.parquet"
+        trace_path = case_dir / "events.vortex"
         metadata_path = case_dir / "run_metadata.json"
         simulation_config_path.write_text(simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
         simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
         snapshot_writer = _MemorySnapshotWriter()
-        with ParquetEventTraceWriter(trace_path) as trace_writer:
+        with open_event_trace_writer(trace_path) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -351,7 +351,7 @@ def run_cycle_service_ratio_experiment(
         case_dir.mkdir(parents=True, exist_ok=True)
         lp_json_path = case_dir / "lp_solution.json"
         simulation_config_path = case_dir / "simulation_config.json"
-        trace_path = case_dir / "events.parquet"
+        trace_path = case_dir / "events.vortex"
         metadata_path = case_dir / "run_metadata.json"
         run_seed = seed_base + n_nodes
         run_cons_edge_fraction = _cycle_consumption_edge_fraction(n_nodes, cons_edge_fraction)
@@ -388,7 +388,7 @@ def run_cycle_service_ratio_experiment(
             simulator.reset_measurements(reset_time_origin=True)
             initial_state = _simulator_state_payload(simulator)
         snapshot_writer = _MemorySnapshotWriter()
-        with ParquetEventTraceWriter(trace_path) as trace_writer:
+        with open_event_trace_writer(trace_path) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -484,7 +484,7 @@ def run_headroom_experiment(
         case_dir = base_dir / f"headroom_{_headroom_slug(headroom)}"
         case_dir.mkdir(parents=True, exist_ok=True)
         simulation_config_path = case_dir / "simulation_config.json"
-        trace_path = case_dir / "events.parquet"
+        trace_path = case_dir / "events.vortex"
         metadata_path = case_dir / "run_metadata.json"
         headroom_input = _apply_capacity_headroom(base_simulation_input, headroom)
         simulation_config_path.write_text(headroom_input.model_dump_json(indent=2))
@@ -501,7 +501,7 @@ def run_headroom_experiment(
             simulator.reset_measurements(reset_time_origin=True)
             initial_state = _simulator_state_payload(simulator)
         snapshot_writer = _MemorySnapshotWriter()
-        with ParquetEventTraceWriter(trace_path) as trace_writer:
+        with open_event_trace_writer(trace_path) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,

@@ -16,9 +16,9 @@ Always use `uv` here.
 uv sync --all-groups
 uv run qbp-sim run --config configs/example.json --until 50
 uv run qbp-sim example --until 50 --seed 0
-uv run qbp-sim example --until 50 --trace output/traces/example.parquet
+uv run qbp-sim example --until 50 --trace output/traces/example.vortex
 uv run qbp-sim example --until 50 --snapshots output/snapshots/example.jsonl.zst
-uv run qbp-sim replay --trace output/traces/example.parquet
+uv run qbp-sim replay --trace output/traces/example.vortex
 uv run qbp-sim analyze --snapshots output/snapshots/example.jsonl.zst
 uv run pytest
 ```
@@ -107,7 +107,7 @@ The simulator is split into two systems:
 
 That separation is intentional. It keeps event generation and state mutation decoupled, and it makes replay straightforward because a saved event log can be fed directly into the applier without resampling randomness.
 
-Experiment commands write durable per-run artifacts as `events.parquet`, `simulation_config.json`,
+Experiment commands write durable per-run artifacts as `events.vortex`, `simulation_config.json`,
 and `run_metadata.json`. Plots produced by those commands use sampled snapshots in memory, but do
 not save snapshot checkpoint files. Snapshots are still available as an explicit lower-level CLI
 artifact type:
@@ -123,7 +123,7 @@ Simulation, replay, and analysis are therefore mostly orthogonal modes.
 - `src/qbp_sim/events.py`: concrete event record type
 - `src/qbp_sim/config.py`: Pydantic JSON input config and runtime conversion
 - `src/qbp_sim/examples.py`: built-in example networks
-- `src/qbp_sim/trace.py`: compressed JSONL and buffered Parquet trace writers/readers
+- `src/qbp_sim/trace.py`: compressed JSONL, buffered Parquet, and compact Vortex trace writers/readers
 - `src/qbp_sim/snapshots.py`: compressed snapshot writer and reader
 - `src/qbp_sim/analysis.py`: snapshot summaries and plotting
 - `src/qbp_sim/cli.py`: command-line entry point
@@ -163,10 +163,10 @@ Compare service-gap decay under different capacity-headroom multipliers:
 uv run qbp-sim headroom-service-ratio --n 16 --until 10000 --headrooms 1.0 1.01 1.05
 ```
 
-Write a buffered Parquet event trace:
+Write a compact Vortex event trace:
 
 ```bash
-uv run qbp-sim example --until 100 --trace output/traces/run-001.parquet
+uv run qbp-sim example --until 100 --trace output/traces/run-001.vortex
 ```
 
 Write sampled snapshots:
@@ -178,7 +178,7 @@ uv run qbp-sim example --until 100 --sample-every 100 --snapshots output/snapsho
 Replay a saved event trace:
 
 ```bash
-uv run qbp-sim replay --trace output/traces/run-001.parquet
+uv run qbp-sim replay --trace output/traces/run-001.vortex
 ```
 
 Analyze snapshots and print a summary:

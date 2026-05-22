@@ -17,6 +17,7 @@ dependencies = [
     "scipy>=1.16.3",
     "tqdm>=4.67.1",
     "vl-convert-python>=1.9.0.post1",
+    "vortex-data>=0.72.0",
     "zstandard>=0.25.0",
 ]
 

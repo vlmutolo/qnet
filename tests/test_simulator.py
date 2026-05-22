@@ -572,6 +572,35 @@ def test_parquet_trace_writer_records_every_event_and_replays(tmp_path) -> None:
     assert replayed.total_scarcity == original.total_scarcity
 
 
+def test_vortex_trace_writer_records_every_event_and_replays(tmp_path) -> None:
+    trace_path = tmp_path / "events.vortex"
+    config = build_four_node_counterexample()
+    sim = GillespieQBPSimulator(config, seed=132)
+
+    with open_event_trace_writer(trace_path) as trace_writer:
+        original = sim.run(until_time=2.0, max_events=400, sample_every=25, trace_writer=trace_writer)
+
+    with open_event_trace_reader(trace_path) as trace_reader:
+        events = list(trace_reader)
+
+    assert trace_path.exists()
+    assert len(events) == original.events_processed
+    assert events[0].dt == events[0].time
+    assert events[-1].event_index == original.events_processed
+
+    replayed = replay_event_stream(
+        config=config,
+        events=events,
+        sample_every=25,
+        final_time=original.final_time,
+    )
+    assert replayed.final_time == original.final_time
+    assert replayed.events_processed == original.events_processed
+    assert replayed.total_backlog == original.total_backlog
+    assert replayed.total_inventory == original.total_inventory
+    assert replayed.total_scarcity == original.total_scarcity
+
+
 def test_replay_reproduces_summary_from_trace(tmp_path) -> None:
     trace_path = tmp_path / "replay.jsonl.zst"
     sim = GillespieQBPSimulator(build_four_node_counterexample(), seed=17)
@@ -674,7 +703,7 @@ def test_limited_info_service_ratio_experiment_writes_events_metadata_and_plot(t
     assert [run.policy_label for run in runs] == ["full info", "limited k=1, m=1"]
     assert all(run.snapshots for run in runs)
     assert all(run.trace_path.exists() for run in runs)
-    assert all(run.trace_path.suffix == ".parquet" for run in runs)
+    assert all(run.trace_path.suffix == ".vortex" for run in runs)
     assert all(run.metadata_path.exists() for run in runs)
     assert all(run.simulation_config_path.exists() for run in runs)
     assert all(0.0 <= run.summary.final_service_ratio <= 1.0 for run in runs)

@@ -135,7 +135,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="OUTFILE",
-        help="Write every event to a trace file. Use .parquet for buffered Parquet or .jsonl.zst for compressed JSONL.",
+        help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
     run_parser.add_argument(
         "--snapshots",
@@ -169,7 +169,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="OUTFILE",
-        help="Write every event to a trace file. Use .parquet for buffered Parquet or .jsonl.zst for compressed JSONL.",
+        help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
     example_parser.add_argument(
         "--snapshots",
@@ -189,7 +189,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         metavar="INFILE",
-        help="Read a .parquet or .jsonl.zst event trace to replay.",
+        help="Read a .vortex, .parquet, or .jsonl.zst event trace to replay.",
     )
     replay_parser.add_argument(
         "--sample-every",
@@ -309,7 +309,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output/cycle_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs, simulation configs, Parquet event traces, and run metadata.",
+        help="Directory to write LP outputs, simulation configs, compact Vortex event traces, and run metadata.",
     )
     cycle_parser.add_argument(
         "--plot-out",
@@ -404,7 +404,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output/headroom_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs, headroom configs, Parquet event traces, and run metadata.",
+        help="Directory to write LP outputs, headroom configs, compact Vortex event traces, and run metadata.",
     )
     headroom_parser.add_argument(
         "--plot-out",
@@ -497,7 +497,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output/limited_info_service_ratio"),
         metavar="OUTDIR",
-        help="Directory to write LP outputs, policy configs, Parquet event traces, and run metadata.",
+        help="Directory to write LP outputs, policy configs, compact Vortex event traces, and run metadata.",
     )
     limited_parser.add_argument(
         "--plot-out",

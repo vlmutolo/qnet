@@ -23,6 +23,8 @@ from qbp_sim.trace import (
     EventTraceWriter,
     ParquetEventTraceReader,
     ParquetEventTraceWriter,
+    VortexEventTraceReader,
+    VortexEventTraceWriter,
     open_event_trace_reader,
     open_event_trace_writer,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "EventTraceWriter",
     "ParquetEventTraceReader",
     "ParquetEventTraceWriter",
+    "VortexEventTraceReader",
+    "VortexEventTraceWriter",
     "CycleServiceRatioRun",
     "HeadroomRun",
     "LimitedInfoServiceRatioRun",
