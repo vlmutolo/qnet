@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 
 from qbp_sim.config import SimulationInputConfig
@@ -549,8 +550,12 @@ def test_parquet_trace_writer_records_every_event_and_replays(tmp_path) -> None:
     with open_event_trace_reader(trace_path) as trace_reader:
         events = list(trace_reader)
 
+    parquet_columns = set(pq.ParquetFile(trace_path).schema_arrow.names)
+    assert "time" in parquet_columns
+    assert "dt" not in parquet_columns
     assert len(events) == original.events_processed
     assert events[0].event_index == 1
+    assert events[0].dt == events[0].time
     assert events[-1].event_index == original.events_processed
     assert events[-1].inventory_total == original.total_inventory
 

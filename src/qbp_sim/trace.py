@@ -14,7 +14,6 @@ from qbp_sim.events import QBPEvent
 TRACE_COLUMNS = (
     "event_index",
     "time",
-    "dt",
     "total_rate",
     "event_type",
     "event_rate",
@@ -32,7 +31,6 @@ TRACE_SCHEMA = pa.schema(
     [
         ("event_index", pa.int64()),
         ("time", pa.float64()),
-        ("dt", pa.float64()),
         ("total_rate", pa.float64()),
         ("event_type", pa.string()),
         ("event_rate", pa.float64()),
@@ -125,7 +123,6 @@ class ParquetEventTraceWriter:
         columns = self._columns
         columns["event_index"].append(event.event_index)
         columns["time"].append(event.time)
-        columns["dt"].append(event.dt)
         columns["total_rate"].append(event.total_rate)
         columns["event_type"].append(event.event_type)
         columns["event_rate"].append(event.event_rate)
@@ -213,8 +210,13 @@ class ParquetEventTraceReader:
     def __iter__(self) -> Iterator[QBPEvent]:
         if self._parquet_file is None:
             raise RuntimeError("Parquet trace reader must be opened with a context manager before use.")
-        for batch in self._parquet_file.iter_batches(batch_size=self.batch_size, columns=list(TRACE_COLUMNS)):
+        previous_time = 0.0
+        columns = [column for column in TRACE_COLUMNS if column in self._parquet_file.schema_arrow.names]
+        for batch in self._parquet_file.iter_batches(batch_size=self.batch_size, columns=columns):
             for record in batch.to_pylist():
+                event_time = float(record["time"])
+                record["dt"] = event_time - previous_time
+                previous_time = event_time
                 yield QBPEvent.from_dict(record)
 
     def close(self) -> None:
