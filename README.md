@@ -23,11 +23,6 @@ uv run qbp-sim analyze --snapshots output/snapshots/example.jsonl.zst
 uv run pytest
 ```
 
-There are also two convenience wrappers at the repository root:
-
-- `./run-example` runs `uv run qbp-sim example`
-- `./run-tests` runs `uv run pytest`
-
 ## Current model
 
 The simulator is now a continuous-time analogue of the paper's virtual/physical backpressure architecture, not an exact reproduction of the paper's slot-based theorem.
@@ -130,7 +125,7 @@ Simulation, replay, and analysis are therefore mostly orthogonal modes.
 - `src/qbp_sim/analysis.py`: snapshot summaries and plotting
 - `src/qbp_sim/cli.py`: command-line entry point
 - `linear.py`: separate LP benchmark model used for comparison against backpressure summaries
-- `tests/test_simulator.py`: smoke tests
+- `tests/test_simulator.py`: unit, replay, trace, and gated stochastic simulator tests
 
 ## Typical commands
 
@@ -220,3 +215,13 @@ Run the test suite:
 ```bash
 uv run pytest
 ```
+
+Run the gated stochastic checks:
+
+```bash
+QBP_SIM_RUN_GATED_TESTS=1 uv run pytest
+```
+
+Long-running simulations and analysis jobs should be managed with `pueue` so they can continue
+outside the active shell session. Generated experiment outputs belong under `output/`, which is
+ignored by Git.
