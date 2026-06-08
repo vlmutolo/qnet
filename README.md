@@ -1,6 +1,6 @@
 # qbp-sim
 
-This repository is now a `uv`-managed Python project for experimenting with a continuous-time Gillespie simulation of quantum backpressure routing.
+Continuous-time Gillespie simulation of quantum backpressure routing.
 
 Always use `uv` here.
 
