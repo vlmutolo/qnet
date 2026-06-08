@@ -22,6 +22,7 @@ from qbp_sim.experiments import (
     run_limited_info_service_ratio_experiment,
 )
 from qbp_sim.analysis import plot_snapshot_metric, plot_snapshot_metric_series, summarize_snapshots
+from qbp_sim.cli import _apply_instant_service_fulfillment_arg, _build_parser
 from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 import qbp_sim.simulator as simulator_module
@@ -91,6 +92,27 @@ def _cycle_runtime_config(num_nodes: int, seed: int, tmp_path: Path) -> Gillespi
     return SimulationInputConfig.from_json_file(config_path).to_runtime_config()
 
 
+def _single_edge_generation_config(*, instant_service_fulfillment: bool = False) -> GillespieQBPConfig:
+    generation_rates = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float64)
+    demand_rates = np.zeros((2, 2), dtype=np.float64)
+    service_rates = np.zeros((2, 2), dtype=np.float64)
+    swap_rates = np.zeros(2, dtype=np.float64)
+    return GillespieQBPConfig(
+        generation_rates=generation_rates,
+        demand_rates=demand_rates,
+        swap_rates=swap_rates,
+        service_rates=service_rates,
+        instant_service_fulfillment=instant_service_fulfillment,
+    )
+
+
+def _pending_service_matrix(n_nodes: int, x: int, y: int) -> np.ndarray:
+    h_r = np.zeros((n_nodes, n_nodes), dtype=np.int64)
+    h_r[x, y] = 1
+    h_r[y, x] = 1
+    return h_r
+
+
 def test_service_event_consumes_inventory_and_backlog() -> None:
     generation_rates = np.zeros((2, 2), dtype=np.float64)
     demand_rates = np.zeros((2, 2), dtype=np.float64)
@@ -125,6 +147,156 @@ def test_service_event_consumes_inventory_and_backlog() -> None:
     assert sim.services_completed == 1
     assert sim.total_backlog == 0
     assert sim.total_inventory == 0
+
+
+def test_instant_service_after_generation_fulfills_pending_service(tmp_path) -> None:
+    config = _single_edge_generation_config(instant_service_fulfillment=True)
+    initial_h_r = _pending_service_matrix(2, 0, 1)
+    trace_path = tmp_path / "instant-generation.jsonl.zst"
+    sim = GillespieQBPSimulator(config, seed=5, initial_h_r=initial_h_r)
+
+    with EventTraceWriter(trace_path) as trace_writer:
+        sampled = sim.step(trace_writer=trace_writer)
+
+    with EventTraceReader(trace_path) as trace_reader:
+        events = list(trace_reader)
+
+    assert sampled is not None
+    assert sampled.event_type == "pair_generation"
+    assert [event.event_type for event in events] == ["pair_generation", "physical_service"]
+    assert events[1].time == events[0].time
+    assert events[1].dt == 0.0
+    assert events[1].total_rate == 0.0
+    assert events[1].event_rate == 0.0
+    assert sim.pair_generations == 1
+    assert sim.services_completed == 1
+    assert sim.events_processed == 2
+    assert sim.state.q[0, 1] == 0
+    assert sim.state.h_r[0, 1] == 0
+    assert sim.total_inventory == 0
+    assert sim.state.total_service_deficit == 0
+
+
+def test_instant_service_does_not_emit_without_pending_service(tmp_path) -> None:
+    config = _single_edge_generation_config(instant_service_fulfillment=True)
+    trace_path = tmp_path / "instant-negative.jsonl.zst"
+    sim = GillespieQBPSimulator(config, seed=5)
+
+    with EventTraceWriter(trace_path) as trace_writer:
+        sampled = sim.step(trace_writer=trace_writer)
+
+    with EventTraceReader(trace_path) as trace_reader:
+        events = list(trace_reader)
+
+    assert sampled is not None
+    assert sampled.event_type == "pair_generation"
+    assert [event.event_type for event in events] == ["pair_generation"]
+    assert sim.pair_generations == 1
+    assert sim.services_completed == 0
+    assert sim.events_processed == 1
+    assert sim.state.q[0, 1] == 1
+    assert sim.total_inventory == 1
+
+
+def test_instant_service_after_physical_swap_fulfills_output_edge(tmp_path) -> None:
+    generation_rates = np.zeros((3, 3), dtype=np.float64)
+    demand_rates = np.zeros((3, 3), dtype=np.float64)
+    service_rates = np.zeros((3, 3), dtype=np.float64)
+    swap_rates = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    config = GillespieQBPConfig(
+        generation_rates=generation_rates,
+        demand_rates=demand_rates,
+        swap_rates=swap_rates,
+        service_rates=service_rates,
+        instant_service_fulfillment=True,
+    )
+    probe = GillespieQBPSimulator(config, seed=0)
+    matches = np.flatnonzero((probe.swap_i == 0) & (probe.swap_y == 1) & (probe.swap_z == 2))
+    assert len(matches) == 1
+    swap_idx = int(matches[0])
+
+    initial_q = np.zeros((3, 3), dtype=np.int64)
+    initial_q[0, 1] = initial_q[1, 0] = 1
+    initial_q[0, 2] = initial_q[2, 0] = 1
+    initial_h_mu = np.zeros_like(probe.state.h_mu)
+    initial_h_mu[swap_idx] = 1
+    initial_h_r = _pending_service_matrix(3, 1, 2)
+    trace_path = tmp_path / "instant-swap.jsonl.zst"
+    sim = GillespieQBPSimulator(
+        config,
+        seed=5,
+        initial_q=initial_q,
+        initial_h_r=initial_h_r,
+        initial_h_mu=initial_h_mu,
+    )
+
+    with EventTraceWriter(trace_path) as trace_writer:
+        sampled = sim.step(trace_writer=trace_writer)
+
+    with EventTraceReader(trace_path) as trace_reader:
+        events = list(trace_reader)
+
+    assert sampled is not None
+    assert sampled.event_type == "physical_swap"
+    assert sampled.swap_idx == swap_idx
+    assert [event.event_type for event in events] == ["physical_swap", "physical_service"]
+    assert events[1].time == events[0].time
+    assert events[1].dt == 0.0
+    assert events[1].x == 1
+    assert events[1].y == 2
+    assert sim.swaps_completed == 1
+    assert sim.services_completed == 1
+    assert sim.events_processed == 2
+    assert sim.state.q[1, 2] == 0
+    assert sim.state.h_r[1, 2] == 0
+    assert sim.state.h_mu[swap_idx] == 0
+    assert sim.total_inventory == 0
+    assert sim.state.total_service_deficit == 0
+
+
+def test_instant_service_replay_is_literal_without_double_fulfillment(tmp_path) -> None:
+    config = _single_edge_generation_config(instant_service_fulfillment=True)
+    initial_h_r = _pending_service_matrix(2, 0, 1)
+    trace_path = tmp_path / "instant-replay.jsonl.zst"
+    sim = GillespieQBPSimulator(config, seed=5, initial_h_r=initial_h_r)
+
+    with EventTraceWriter(trace_path) as trace_writer:
+        original = sim.run(
+            until_time=10.0,
+            max_events=1,
+            sample_every=0,
+            trace_writer=trace_writer,
+            progress=False,
+        )
+
+    with EventTraceReader(trace_path) as trace_reader:
+        replayed = replay_event_stream(
+            config=config,
+            events=trace_reader,
+            sample_every=0,
+            final_time=original.final_time,
+            initial_h_r=_pending_service_matrix(2, 0, 1),
+        )
+
+    assert original.events_processed == 2
+    assert replayed.events_processed == original.events_processed
+    assert replayed.final_time == original.final_time
+    assert replayed.pair_generations == original.pair_generations
+    assert replayed.services_completed == original.services_completed
+    assert replayed.total_inventory == original.total_inventory
+    assert replayed.total_backlog == original.total_backlog
+    assert replayed.total_scarcity == original.total_scarcity
+
+
+def test_instant_service_max_events_caps_sampled_events_not_companion_events() -> None:
+    config = _single_edge_generation_config(instant_service_fulfillment=True)
+    sim = GillespieQBPSimulator(config, seed=5, initial_h_r=_pending_service_matrix(2, 0, 1))
+
+    result = sim.run(until_time=10.0, max_events=1, sample_every=0, progress=False)
+
+    assert result.pair_generations == 1
+    assert result.services_completed == 1
+    assert result.events_processed == 2
 
 
 def test_demand_only_network_accumulates_backlog() -> None:
@@ -800,10 +972,20 @@ def test_simulation_input_config_defaults_capacity_headroom_to_one_percent() -> 
     runtime = input_config.to_runtime_config()
 
     assert input_config.capacity_headroom == 1.01
+    assert input_config.instant_service_fulfillment is False
+    assert runtime.instant_service_fulfillment is False
     assert np.allclose(runtime.generation_rates, np.asarray(input_config.generation_rates) * 1.01)
     assert np.allclose(runtime.demand_rates, np.asarray(input_config.consumption_rates))
     assert np.allclose(runtime.service_rates, np.asarray(input_config.consumption_rates) * 1.01)
     assert np.allclose(runtime.swap_rates, np.asarray(input_config.swap_rates) * 1.01)
+
+
+def test_cli_instant_service_fulfillment_flag_enables_runtime_config() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["example", "--instant-service-fulfillment"])
+    config = _apply_instant_service_fulfillment_arg(build_four_node_counterexample(), args)
+
+    assert config.instant_service_fulfillment is True
 
 
 def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) -> None:
@@ -825,6 +1007,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
                 ],
                 "swap_rates": [0.0, 1.0, 1.0, 0.0],
                 "capacity_headroom": 1.25,
+                "instant_service_fulfillment": True,
                 "virtual_swap_policy": {
                     "mode": "power_of_k_memory",
                     "k": 2,
@@ -839,6 +1022,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
 
     assert input_config.num_nodes == 4
     assert input_config.capacity_headroom == 1.25
+    assert input_config.instant_service_fulfillment is True
     assert runtime.generation_rates[0, 1] == 1.25
     assert runtime.generation_rates[0, 3] == 0.0
     assert runtime.demand_rates[0, 3] == 2.0
@@ -848,6 +1032,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
     assert runtime.virtual_swap_policy.mode == "power_of_k_memory"
     assert runtime.virtual_swap_policy.k == 2
     assert runtime.virtual_swap_policy.memory == 0
+    assert runtime.instant_service_fulfillment is True
 
 
 def test_simulation_input_config_rejects_asymmetric_rates() -> None:

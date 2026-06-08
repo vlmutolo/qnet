@@ -191,6 +191,13 @@ def _apply_capacity_headroom(
     return simulation_input.model_copy(update={"capacity_headroom": float(headroom)})
 
 
+def _apply_instant_service_fulfillment(
+    simulation_input: SimulationInputConfig,
+    enabled: bool,
+) -> SimulationInputConfig:
+    return simulation_input.model_copy(update={"instant_service_fulfillment": bool(enabled)})
+
+
 def run_limited_info_service_ratio_experiment(
     *,
     n_nodes: int,
@@ -209,6 +216,7 @@ def run_limited_info_service_ratio_experiment(
     swap_rate: float = 100.0,
     capacity_headroom: float = 1.01,
     trace_float_precision: str = "float32",
+    instant_service_fulfillment: bool = False,
     progress: bool | None = None,
 ) -> list[LimitedInfoServiceRatioRun]:
     if sample_every <= 0:
@@ -243,7 +251,10 @@ def run_limited_info_service_ratio_experiment(
     )
     if base_simulation_input is None:
         raise RuntimeError(f"LP solve failed for cycle n={n_nodes}.")
-    base_simulation_input = _apply_capacity_headroom(base_simulation_input, capacity_headroom)
+    base_simulation_input = _apply_instant_service_fulfillment(
+        _apply_capacity_headroom(base_simulation_input, capacity_headroom),
+        instant_service_fulfillment,
+    )
     base_simulation_config_path.write_text(base_simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
     variants: list[tuple[str, str, int | None, int | None, SimulationInputConfig]] = [
@@ -303,6 +314,7 @@ def run_limited_info_service_ratio_experiment(
                 "k": k,
                 "memory": memory,
                 "capacity_headroom": simulation_input.capacity_headroom,
+                "instant_service_fulfillment": simulation_input.instant_service_fulfillment,
             },
         )
 
@@ -341,6 +353,7 @@ def run_cycle_service_ratio_experiment(
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
     trace_float_precision: str = "float32",
+    instant_service_fulfillment: bool = False,
     progress: bool | None = None,
 ) -> list[CycleServiceRatioRun]:
     if sample_every <= 0:
@@ -380,6 +393,11 @@ def run_cycle_service_ratio_experiment(
         )
         if simulation_input is None:
             raise RuntimeError(f"LP solve failed for cycle n={n_nodes}.")
+        simulation_input = _apply_instant_service_fulfillment(
+            simulation_input,
+            instant_service_fulfillment,
+        )
+        simulation_config_path.write_text(simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
         simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
         initial_state = None
@@ -417,6 +435,7 @@ def run_cycle_service_ratio_experiment(
             lp_json_path=lp_json_path,
             result=result,
             initial_state=initial_state,
+            extra={"instant_service_fulfillment": simulation_input.instant_service_fulfillment},
         )
 
         runs.append(
@@ -451,6 +470,7 @@ def run_headroom_experiment(
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
     trace_float_precision: str = "float32",
+    instant_service_fulfillment: bool = False,
     progress: bool | None = None,
 ) -> list[HeadroomRun]:
     if sample_every <= 0:
@@ -493,8 +513,11 @@ def run_headroom_experiment(
         simulation_config_path = case_dir / "simulation_config.json"
         trace_path = case_dir / "events.vortex"
         metadata_path = case_dir / "run_metadata.json"
-        headroom_input = _apply_capacity_headroom(base_simulation_input, headroom)
-        simulation_config_path.write_text(headroom_input.model_dump_json(indent=2))
+        headroom_input = _apply_instant_service_fulfillment(
+            _apply_capacity_headroom(base_simulation_input, headroom),
+            instant_service_fulfillment,
+        )
+        simulation_config_path.write_text(headroom_input.model_dump_json(indent=2), encoding="utf-8")
 
         simulator = GillespieQBPSimulator(config=headroom_input.to_runtime_config(), seed=run_seed)
         initial_state = None
@@ -532,7 +555,10 @@ def run_headroom_experiment(
             lp_json_path=lp_json_path,
             result=result,
             initial_state=initial_state,
-            extra={"capacity_headroom": headroom},
+            extra={
+                "capacity_headroom": headroom,
+                "instant_service_fulfillment": headroom_input.instant_service_fulfillment,
+            },
         )
 
         runs.append(

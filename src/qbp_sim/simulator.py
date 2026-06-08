@@ -37,6 +37,7 @@ class GillespieQBPConfig:
     swap_rates: IntArray1D | Array1D
     service_rates: FloatMatrix
     virtual_swap_policy: VirtualSwapPolicy = field(default_factory=VirtualSwapPolicy)
+    instant_service_fulfillment: bool = False
 
 
 @dataclass(slots=True)
@@ -901,6 +902,41 @@ class GillespieQBPSimulator:
             trace_writer.write(applied)
         return applied
 
+    def _instant_service_edge_for_event(self, event: QBPEvent) -> tuple[int, int] | None:
+        if event.event_type == "pair_generation":
+            return _require(event.x, "x"), _require(event.y, "y")
+        if event.event_type == "physical_swap":
+            return _require(event.y, "y"), _require(event.z, "z")
+        return None
+
+    def _maybe_apply_instant_service(
+        self,
+        trigger_event: QBPEvent,
+        trace_writer: EventTraceWriter | None = None,
+    ) -> QBPEvent | None:
+        if not self.config.instant_service_fulfillment:
+            return None
+
+        service_edge = self._instant_service_edge_for_event(trigger_event)
+        if service_edge is None:
+            return None
+
+        x, y = service_edge
+        if self.state.h_r[x, y] <= 0 or self.state.q[x, y] <= 0:
+            return None
+
+        service_event = QBPEvent(
+            event_index=self.state.events_processed + 1,
+            time=self.state.time,
+            dt=0.0,
+            total_rate=0.0,
+            event_type="physical_service",
+            event_rate=0.0,
+            x=x,
+            y=y,
+        )
+        return self.apply_event(service_event, trace_writer=trace_writer)
+
     def reset_measurements(self, *, reset_time_origin: bool = True) -> None:
         self.state.events_processed = 0
         self.state.demand_arrivals = 0
@@ -920,7 +956,9 @@ class GillespieQBPSimulator:
         event = self.produce_next_event(until_time=until_time)
         if event is None:
             return None
-        return self.apply_event(event, trace_writer=trace_writer)
+        applied = self.apply_event(event, trace_writer=trace_writer)
+        self._maybe_apply_instant_service(applied, trace_writer=trace_writer)
+        return applied
 
     def run(
         self,
@@ -938,19 +976,23 @@ class GillespieQBPSimulator:
         last_snapshot_key: tuple[int, float] | None = None
         use_progress = should_use_progress() if progress is None else progress
 
+        sampled_events_processed = 0
+
         if use_progress:
             with tqdm(
-                total=max_events,
+                total=None if self.config.instant_service_fulfillment else max_events,
                 desc="simulate",
                 unit="event",
             ) as progress_bar:
                 while self.state.time < until_time and (
-                    max_events is None or self.state.events_processed < max_events
+                    max_events is None or sampled_events_processed < max_events
                 ):
+                    events_before = self.state.events_processed
                     event = self.step(until_time=until_time, trace_writer=trace_writer)
                     if event is None:
                         break
-                    progress_bar.update(1)
+                    sampled_events_processed += 1
+                    progress_bar.update(self.state.events_processed - events_before)
                     if self.state.events_processed % 1000 == 0 or self.state.time >= until_time:
                         progress_bar.set_postfix(
                             time=f"{self.state.time:.3f}",
@@ -966,11 +1008,12 @@ class GillespieQBPSimulator:
                         alpha_samples.append(self.state.total_scarcity)
         else:
             while self.state.time < until_time and (
-                max_events is None or self.state.events_processed < max_events
+                max_events is None or sampled_events_processed < max_events
             ):
                 event = self.step(until_time=until_time, trace_writer=trace_writer)
                 if event is None:
                     break
+                sampled_events_processed += 1
                 if sample_every > 0 and self.state.events_processed % sample_every == 0:
                     if snapshot_writer is not None:
                         snapshot_writer.write(self.build_snapshot())
@@ -1173,6 +1216,7 @@ class GillespieQBPSimulator:
             swap_rates=swap_rates,
             service_rates=service_rates,
             virtual_swap_policy=self._validate_virtual_swap_policy(config.virtual_swap_policy),
+            instant_service_fulfillment=bool(config.instant_service_fulfillment),
         )
 
     def _validate_virtual_swap_policy(self, policy: VirtualSwapPolicy) -> VirtualSwapPolicy:

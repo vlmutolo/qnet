@@ -72,6 +72,13 @@ class SimulationInputConfig(BaseModel):
         default_factory=VirtualSwapPolicyConfig,
         description="Optional virtual swap selection policy.",
     )
+    instant_service_fulfillment: bool = Field(
+        default=False,
+        description=(
+            "When true, inventory created by generation or physical swap output immediately "
+            "checks for one pending physical service on that edge."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_shapes(self) -> SimulationInputConfig:
@@ -125,6 +132,7 @@ class SimulationInputConfig(BaseModel):
                 k=self.virtual_swap_policy.k,
                 memory=self.virtual_swap_policy.memory,
             ),
+            instant_service_fulfillment=self.instant_service_fulfillment,
         )
 
     @classmethod
