@@ -84,8 +84,19 @@ def _add_instant_service_fulfillment_arg(command_parser: argparse.ArgumentParser
         "--instant-service-fulfillment",
         action="store_true",
         help=(
-            "Immediately realize one pending physical service on the edge where a generation "
-            "or physical swap output creates inventory."
+            "Use the local deterministic frontier to immediately realize one pending physical "
+            "service when inventory and H^R meet on the same edge."
+        ),
+    )
+
+
+def _add_instant_swap_fulfillment_arg(command_parser: argparse.ArgumentParser) -> None:
+    command_parser.add_argument(
+        "--instant-swap-fulfillment",
+        action="store_true",
+        help=(
+            "Use the local deterministic frontier to immediately realize pending physical swaps "
+            "instead of sampling physical swap hazards."
         ),
     )
 
@@ -94,9 +105,15 @@ def _apply_instant_service_fulfillment_arg(
     config: GillespieQBPConfig,
     args: argparse.Namespace,
 ) -> GillespieQBPConfig:
-    if not getattr(args, "instant_service_fulfillment", False):
+    instant_service = getattr(args, "instant_service_fulfillment", False)
+    instant_swap = getattr(args, "instant_swap_fulfillment", False)
+    if not instant_service and not instant_swap:
         return config
-    return replace(config, instant_service_fulfillment=True)
+    return replace(
+        config,
+        instant_service_fulfillment=config.instant_service_fulfillment or instant_service,
+        instant_swap_fulfillment=config.instant_swap_fulfillment or instant_swap,
+    )
 
 
 def _parse_limited_policy(value: str) -> tuple[int, int]:
@@ -179,6 +196,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_virtual_swap_policy_args(run_parser)
     _add_instant_service_fulfillment_arg(run_parser)
+    _add_instant_swap_fulfillment_arg(run_parser)
 
     example_parser = subparsers.add_parser(
         "example",
@@ -215,6 +233,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_virtual_swap_policy_args(example_parser)
     _add_instant_service_fulfillment_arg(example_parser)
+    _add_instant_swap_fulfillment_arg(example_parser)
 
     replay_parser = subparsers.add_parser(
         "replay",
@@ -349,6 +368,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_trace_float_precision_arg(cycle_parser)
     _add_instant_service_fulfillment_arg(cycle_parser)
+    _add_instant_swap_fulfillment_arg(cycle_parser)
     cycle_parser.add_argument(
         "--plot-out",
         type=Path,
@@ -446,6 +466,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_trace_float_precision_arg(headroom_parser)
     _add_instant_service_fulfillment_arg(headroom_parser)
+    _add_instant_swap_fulfillment_arg(headroom_parser)
     headroom_parser.add_argument(
         "--plot-out",
         type=Path,
@@ -541,6 +562,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_trace_float_precision_arg(limited_parser)
     _add_instant_service_fulfillment_arg(limited_parser)
+    _add_instant_swap_fulfillment_arg(limited_parser)
     limited_parser.add_argument(
         "--plot-out",
         type=Path,
@@ -707,6 +729,7 @@ def main(argv: list[str] | None = None) -> None:
             swap_rate=args.swap_rate,
             trace_float_precision=args.trace_float_precision,
             instant_service_fulfillment=args.instant_service_fulfillment,
+            instant_swap_fulfillment=args.instant_swap_fulfillment,
         )
         plot_cycle_service_ratio_runs(runs, args.plot_out)
         print("Cycle service-gap experiment")
@@ -734,6 +757,7 @@ def main(argv: list[str] | None = None) -> None:
             swap_rate=args.swap_rate,
             trace_float_precision=args.trace_float_precision,
             instant_service_fulfillment=args.instant_service_fulfillment,
+            instant_swap_fulfillment=args.instant_swap_fulfillment,
         )
         plot_headroom_runs(runs, args.plot_out)
         print("Headroom service-gap experiment")
@@ -762,6 +786,7 @@ def main(argv: list[str] | None = None) -> None:
             capacity_headroom=args.headroom,
             trace_float_precision=args.trace_float_precision,
             instant_service_fulfillment=args.instant_service_fulfillment,
+            instant_swap_fulfillment=args.instant_swap_fulfillment,
         )
         plot_limited_info_service_ratio_runs(runs, args.plot_out, plot_start_time=args.plot_start_time)
         print("Limited-info service-ratio experiment")

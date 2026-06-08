@@ -53,11 +53,12 @@ JSON simulation input is validated with Pydantic and currently only needs:
 It may also include `capacity_headroom`, an optional multiplier for controllable capacity and
 opportunity rates. The default is `1.01`. At runtime, `capacity_headroom` scales
 `generation_rates`, `swap_rates`, and service hazards, while leaving demand arrivals from
-`consumption_rates` unchanged. `instant_service_fulfillment` is an opt-in experimental mode,
-defaulting to `false`, that immediately realizes one pending physical service on an edge when
-generation or a physical swap output creates inventory on that edge. The immediate realization is
-logged as a separate zero-time `physical_service` event. Input may also include an optional virtual
-swap scheduler policy:
+`consumption_rates` unchanged. `instant_service_fulfillment` and `instant_swap_fulfillment` are
+opt-in experimental modes, defaulting to `false`, that use a local deterministic frontier after
+sampled events. The frontier realizes at most one pending physical service on the active edge
+before considering pending swaps that use that edge; deterministic realizations are logged as
+separate zero-time `physical_service` or `physical_swap` events. Input may also include an optional
+virtual swap scheduler policy:
 
 ```json
 {
@@ -151,10 +152,10 @@ Run the built-in example with the limited-information virtual swap policy:
 uv run qbp-sim example --until 100 --virtual-swap-policy power-of-k-memory --swap-k 4 --swap-memory 8
 ```
 
-Run the built-in example with instantaneous physical service fulfillment enabled:
+Run the built-in example with local instantaneous physical fulfillment enabled:
 
 ```bash
-uv run qbp-sim example --until 100 --instant-service-fulfillment
+uv run qbp-sim example --until 100 --instant-service-fulfillment --instant-swap-fulfillment
 ```
 
 Compare full-information and limited-information policies on an LP-derived cycle and plot

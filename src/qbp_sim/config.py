@@ -75,8 +75,15 @@ class SimulationInputConfig(BaseModel):
     instant_service_fulfillment: bool = Field(
         default=False,
         description=(
-            "When true, inventory created by generation or physical swap output immediately "
-            "checks for one pending physical service on that edge."
+            "When true, a local deterministic frontier immediately realizes one pending "
+            "physical service when inventory and H^R meet on the same edge."
+        ),
+    )
+    instant_swap_fulfillment: bool = Field(
+        default=False,
+        description=(
+            "When true, a local deterministic frontier immediately realizes pending physical "
+            "swaps instead of sampling physical swap hazards."
         ),
     )
 
@@ -133,6 +140,7 @@ class SimulationInputConfig(BaseModel):
                 memory=self.virtual_swap_policy.memory,
             ),
             instant_service_fulfillment=self.instant_service_fulfillment,
+            instant_swap_fulfillment=self.instant_swap_fulfillment,
         )
 
     @classmethod

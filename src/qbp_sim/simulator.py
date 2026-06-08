@@ -38,6 +38,12 @@ class GillespieQBPConfig:
     service_rates: FloatMatrix
     virtual_swap_policy: VirtualSwapPolicy = field(default_factory=VirtualSwapPolicy)
     instant_service_fulfillment: bool = False
+    instant_swap_fulfillment: bool = False
+
+
+INSTANT_FRONTIER_NONE = 0
+INSTANT_FRONTIER_EDGE = 1
+INSTANT_FRONTIER_SWAP = 2
 
 
 @dataclass(slots=True)
@@ -218,6 +224,58 @@ def _best_physical_swap_for_node(
             best_deficit = deficit
             best_idx = idx
     return best_deficit, best_idx
+
+
+@njit(cache=True)
+def _physical_swap_is_feasible(
+    q: IntMatrix,
+    h_mu: IntArray1D,
+    swap_idx: int,
+    swap_i: IntArray1D,
+    swap_y: IntArray1D,
+    swap_z: IntArray1D,
+) -> bool:
+    if swap_idx < 0 or h_mu[swap_idx] <= 0:
+        return False
+    i = swap_i[swap_idx]
+    y = swap_y[swap_idx]
+    z = swap_z[swap_idx]
+    return q[i, y] > 0 and q[i, z] > 0
+
+
+@njit(cache=True)
+def _best_physical_swap_using_edge(
+    q: IntMatrix,
+    h_mu: IntArray1D,
+    edge_x: int,
+    edge_y: int,
+    swap_lookup: NDArray[np.int64],
+    swap_i: IntArray1D,
+    swap_y: IntArray1D,
+    swap_z: IntArray1D,
+) -> int:
+    best_deficit = 0
+    best_idx = -1
+    n_nodes = swap_lookup.shape[0]
+    for other in range(n_nodes):
+        if other == edge_x or other == edge_y:
+            continue
+
+        idx = swap_lookup[edge_x, edge_y, other]
+        if _physical_swap_is_feasible(q, h_mu, idx, swap_i, swap_y, swap_z):
+            deficit = h_mu[idx]
+            if deficit > best_deficit or (deficit == best_deficit and (best_idx < 0 or idx < best_idx)):
+                best_deficit = deficit
+                best_idx = idx
+
+        idx = swap_lookup[edge_y, edge_x, other]
+        if _physical_swap_is_feasible(q, h_mu, idx, swap_i, swap_y, swap_z):
+            deficit = h_mu[idx]
+            if deficit > best_deficit or (deficit == best_deficit and (best_idx < 0 or idx < best_idx)):
+                best_deficit = deficit
+                best_idx = idx
+
+    return best_idx
 
 
 @njit(cache=True)
@@ -701,8 +759,8 @@ class GillespieQBPEventProducer:
         generation_total = self.generation_total
         virtual_service_total = self.active_virtual_service_total
         virtual_swap_total = self.active_virtual_swap_total
-        physical_service_total = self.active_physical_service_total
-        physical_swap_total = self.active_physical_swap_total
+        physical_service_total = 0.0 if self.config.instant_service_fulfillment else self.active_physical_service_total
+        physical_swap_total = 0.0 if self.config.instant_swap_fulfillment else self.active_physical_swap_total
         total_rate = (
             demand_total
             + generation_total
@@ -902,30 +960,23 @@ class GillespieQBPSimulator:
             trace_writer.write(applied)
         return applied
 
-    def _instant_service_edge_for_event(self, event: QBPEvent) -> tuple[int, int] | None:
+    def _instant_frontier_for_event(self, event: QBPEvent) -> tuple[int, int, int, int]:
         if event.event_type == "pair_generation":
-            return _require(event.x, "x"), _require(event.y, "y")
+            return INSTANT_FRONTIER_EDGE, _require(event.x, "x"), _require(event.y, "y"), -1
+        if event.event_type == "virtual_service" and self.config.instant_service_fulfillment:
+            return INSTANT_FRONTIER_EDGE, _require(event.x, "x"), _require(event.y, "y"), -1
+        if event.event_type == "virtual_swap" and self.config.instant_swap_fulfillment:
+            return INSTANT_FRONTIER_SWAP, -1, -1, _require(event.swap_idx, "swap_idx")
         if event.event_type == "physical_swap":
-            return _require(event.y, "y"), _require(event.z, "z")
-        return None
+            return INSTANT_FRONTIER_EDGE, _require(event.y, "y"), _require(event.z, "z"), -1
+        return INSTANT_FRONTIER_NONE, -1, -1, -1
 
-    def _maybe_apply_instant_service(
-        self,
-        trigger_event: QBPEvent,
-        trace_writer: EventTraceWriter | None = None,
-    ) -> QBPEvent | None:
+    def _instant_physical_service_event(self, x: int, y: int) -> QBPEvent | None:
         if not self.config.instant_service_fulfillment:
             return None
-
-        service_edge = self._instant_service_edge_for_event(trigger_event)
-        if service_edge is None:
-            return None
-
-        x, y = service_edge
         if self.state.h_r[x, y] <= 0 or self.state.q[x, y] <= 0:
             return None
-
-        service_event = QBPEvent(
+        return QBPEvent(
             event_index=self.state.events_processed + 1,
             time=self.state.time,
             dt=0.0,
@@ -935,7 +986,87 @@ class GillespieQBPSimulator:
             x=x,
             y=y,
         )
-        return self.apply_event(service_event, trace_writer=trace_writer)
+
+    def _instant_physical_swap_event(self, swap_idx: int) -> QBPEvent | None:
+        if not self.config.instant_swap_fulfillment:
+            return None
+        if not _physical_swap_is_feasible(
+            self.state.q,
+            self.state.h_mu,
+            swap_idx,
+            self.swap_i,
+            self.swap_y,
+            self.swap_z,
+        ):
+            return None
+        return QBPEvent(
+            event_index=self.state.events_processed + 1,
+            time=self.state.time,
+            dt=0.0,
+            total_rate=0.0,
+            event_type="physical_swap",
+            event_rate=0.0,
+            swap_idx=int(swap_idx),
+            i=int(self.swap_i[swap_idx]),
+            y=int(self.swap_y[swap_idx]),
+            z=int(self.swap_z[swap_idx]),
+        )
+
+    def _best_instant_swap_using_edge(self, x: int, y: int) -> int:
+        if not self.config.instant_swap_fulfillment:
+            return -1
+        return int(
+            _best_physical_swap_using_edge(
+                self.state.q,
+                self.state.h_mu,
+                x,
+                y,
+                self.producer.swap_lookup,
+                self.swap_i,
+                self.swap_y,
+                self.swap_z,
+            )
+        )
+
+    def _run_instant_fulfillment_closure(
+        self,
+        trigger_event: QBPEvent,
+        trace_writer: EventTraceWriter | None = None,
+    ) -> None:
+        if not self.config.instant_service_fulfillment and not self.config.instant_swap_fulfillment:
+            return
+
+        frontier_kind, frontier_x, frontier_y, frontier_swap_idx = self._instant_frontier_for_event(trigger_event)
+        while frontier_kind != INSTANT_FRONTIER_NONE:
+            if frontier_kind == INSTANT_FRONTIER_EDGE:
+                service_event = self._instant_physical_service_event(frontier_x, frontier_y)
+                if service_event is not None:
+                    self.apply_event(service_event, trace_writer=trace_writer)
+                    return
+
+                swap_idx = self._best_instant_swap_using_edge(frontier_x, frontier_y)
+                swap_event = self._instant_physical_swap_event(swap_idx)
+                if swap_event is None:
+                    return
+                applied_swap = self.apply_event(swap_event, trace_writer=trace_writer)
+                frontier_kind = INSTANT_FRONTIER_EDGE
+                frontier_x = _require(applied_swap.y, "y")
+                frontier_y = _require(applied_swap.z, "z")
+                frontier_swap_idx = -1
+                continue
+
+            if frontier_kind == INSTANT_FRONTIER_SWAP:
+                swap_event = self._instant_physical_swap_event(frontier_swap_idx)
+                if swap_event is None:
+                    return
+                applied_swap = self.apply_event(swap_event, trace_writer=trace_writer)
+                frontier_kind = INSTANT_FRONTIER_EDGE
+                frontier_x = _require(applied_swap.y, "y")
+                frontier_y = _require(applied_swap.z, "z")
+                frontier_swap_idx = -1
+                continue
+
+            return
 
     def reset_measurements(self, *, reset_time_origin: bool = True) -> None:
         self.state.events_processed = 0
@@ -957,7 +1088,7 @@ class GillespieQBPSimulator:
         if event is None:
             return None
         applied = self.apply_event(event, trace_writer=trace_writer)
-        self._maybe_apply_instant_service(applied, trace_writer=trace_writer)
+        self._run_instant_fulfillment_closure(applied, trace_writer=trace_writer)
         return applied
 
     def run(
@@ -980,7 +1111,11 @@ class GillespieQBPSimulator:
 
         if use_progress:
             with tqdm(
-                total=None if self.config.instant_service_fulfillment else max_events,
+                total=(
+                    None
+                    if self.config.instant_service_fulfillment or self.config.instant_swap_fulfillment
+                    else max_events
+                ),
                 desc="simulate",
                 unit="event",
             ) as progress_bar:
@@ -1217,6 +1352,7 @@ class GillespieQBPSimulator:
             service_rates=service_rates,
             virtual_swap_policy=self._validate_virtual_swap_policy(config.virtual_swap_policy),
             instant_service_fulfillment=bool(config.instant_service_fulfillment),
+            instant_swap_fulfillment=bool(config.instant_swap_fulfillment),
         )
 
     def _validate_virtual_swap_policy(self, policy: VirtualSwapPolicy) -> VirtualSwapPolicy:

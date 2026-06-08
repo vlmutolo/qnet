@@ -193,9 +193,15 @@ def _apply_capacity_headroom(
 
 def _apply_instant_service_fulfillment(
     simulation_input: SimulationInputConfig,
-    enabled: bool,
+    service_enabled: bool,
+    swap_enabled: bool = False,
 ) -> SimulationInputConfig:
-    return simulation_input.model_copy(update={"instant_service_fulfillment": bool(enabled)})
+    return simulation_input.model_copy(
+        update={
+            "instant_service_fulfillment": bool(service_enabled),
+            "instant_swap_fulfillment": bool(swap_enabled),
+        }
+    )
 
 
 def run_limited_info_service_ratio_experiment(
@@ -217,6 +223,7 @@ def run_limited_info_service_ratio_experiment(
     capacity_headroom: float = 1.01,
     trace_float_precision: str = "float32",
     instant_service_fulfillment: bool = False,
+    instant_swap_fulfillment: bool = False,
     progress: bool | None = None,
 ) -> list[LimitedInfoServiceRatioRun]:
     if sample_every <= 0:
@@ -254,6 +261,7 @@ def run_limited_info_service_ratio_experiment(
     base_simulation_input = _apply_instant_service_fulfillment(
         _apply_capacity_headroom(base_simulation_input, capacity_headroom),
         instant_service_fulfillment,
+        instant_swap_fulfillment,
     )
     base_simulation_config_path.write_text(base_simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
@@ -315,6 +323,7 @@ def run_limited_info_service_ratio_experiment(
                 "memory": memory,
                 "capacity_headroom": simulation_input.capacity_headroom,
                 "instant_service_fulfillment": simulation_input.instant_service_fulfillment,
+                "instant_swap_fulfillment": simulation_input.instant_swap_fulfillment,
             },
         )
 
@@ -354,6 +363,7 @@ def run_cycle_service_ratio_experiment(
     swap_rate: float = 100.0,
     trace_float_precision: str = "float32",
     instant_service_fulfillment: bool = False,
+    instant_swap_fulfillment: bool = False,
     progress: bool | None = None,
 ) -> list[CycleServiceRatioRun]:
     if sample_every <= 0:
@@ -396,6 +406,7 @@ def run_cycle_service_ratio_experiment(
         simulation_input = _apply_instant_service_fulfillment(
             simulation_input,
             instant_service_fulfillment,
+            instant_swap_fulfillment,
         )
         simulation_config_path.write_text(simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
@@ -435,7 +446,10 @@ def run_cycle_service_ratio_experiment(
             lp_json_path=lp_json_path,
             result=result,
             initial_state=initial_state,
-            extra={"instant_service_fulfillment": simulation_input.instant_service_fulfillment},
+            extra={
+                "instant_service_fulfillment": simulation_input.instant_service_fulfillment,
+                "instant_swap_fulfillment": simulation_input.instant_swap_fulfillment,
+            },
         )
 
         runs.append(
@@ -471,6 +485,7 @@ def run_headroom_experiment(
     swap_rate: float = 100.0,
     trace_float_precision: str = "float32",
     instant_service_fulfillment: bool = False,
+    instant_swap_fulfillment: bool = False,
     progress: bool | None = None,
 ) -> list[HeadroomRun]:
     if sample_every <= 0:
@@ -516,6 +531,7 @@ def run_headroom_experiment(
         headroom_input = _apply_instant_service_fulfillment(
             _apply_capacity_headroom(base_simulation_input, headroom),
             instant_service_fulfillment,
+            instant_swap_fulfillment,
         )
         simulation_config_path.write_text(headroom_input.model_dump_json(indent=2), encoding="utf-8")
 
@@ -558,6 +574,7 @@ def run_headroom_experiment(
             extra={
                 "capacity_headroom": headroom,
                 "instant_service_fulfillment": headroom_input.instant_service_fulfillment,
+                "instant_swap_fulfillment": headroom_input.instant_swap_fulfillment,
             },
         )
 
