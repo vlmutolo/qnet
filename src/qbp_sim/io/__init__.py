@@ -1,4 +1,6 @@
 
+from qbp_sim.io.events import QBPEvent
+from qbp_sim.io.snapshots import QBPSnapshot, SnapshotReader, SnapshotWriter
 from qbp_sim.io.trace import (
     EventTraceReader,
     EventTraceWriter,
@@ -8,7 +10,6 @@ from qbp_sim.io.trace import (
     VortexEventTraceWriter,
     open_event_trace_reader,
     open_event_trace_writer,
-    trace_schema,
 )
 
 __all__ = [
@@ -16,9 +17,12 @@ __all__ = [
     "EventTraceWriter",
     "ParquetEventTraceReader",
     "ParquetEventTraceWriter",
+    "QBPEvent",
+    "QBPSnapshot",
+    "SnapshotReader",
+    "SnapshotWriter",
     "VortexEventTraceReader",
     "VortexEventTraceWriter",
     "open_event_trace_reader",
     "open_event_trace_writer",
-    "trace_schema",
 ]

@@ -27,12 +27,12 @@ uv run pytest
 
 The simulator is now a continuous-time analogue of the paper's virtual/physical backpressure architecture, not an exact reproduction of the paper's slot-based theorem.
 
-There is also a separate LP benchmark module at `linear.py`. That file represents a different,
+There is also a separate LP benchmark module at `qbp_sim.lp`. That module represents a different,
 global average-rate optimization model and should be treated as an optimal comparison target for
 aggregate outputs, not as the same model or control law as the Gillespie backpressure simulator.
 Its simulation-config output now emits the LP's optimal generation, consumption, and per-node
 swap rates using the same Pydantic schema as the simulator input layer. When generating LP
-instances from `linear.py`, the `swap_rate` argument is also used as the uniform per-node
+instances from `qbp_sim.lp`, the `swap_rate` argument is also used as the uniform per-node
 swap cap `K_i` from the paper's LP; the default LP cap is `10.0` so the stock examples are not
 trivially infeasible.
 
@@ -121,16 +121,21 @@ Simulation, replay, and analysis are therefore mostly orthogonal modes.
 
 ## Layout
 
-- `src/qbp_sim/simulator.py`: simulator state, numba kernels, Gillespie loop
-- `src/qbp_sim/events.py`: concrete event record type
-- `src/qbp_sim/config.py`: Pydantic JSON input config and runtime conversion
+The package is organized into presentation-facing layers:
+
+- `src/qbp_sim/core/`: simulator types, indexing helpers, numba kernels, event applier, event producer, instant-fulfillment frontier, run loop, and replay helper
+- `src/qbp_sim/io/`: concrete event records, event traces, and sampled snapshots
+- `src/qbp_sim/config/`: Pydantic JSON input config and runtime conversion
+- `src/qbp_sim/analysis/`: snapshot summaries and Altair chart helpers
+- `src/qbp_sim/experiments/`: LP-derived experiment setup, run metadata, and plots
+- `src/qbp_sim/cli/`: command-line parser and command handlers
+- `src/qbp_sim/lp/`: separate LP benchmark model used for comparison against backpressure summaries
 - `src/qbp_sim/examples.py`: built-in example networks
-- `src/qbp_sim/trace.py`: compressed JSONL, buffered Parquet, and compact Vortex trace writers/readers
-- `src/qbp_sim/snapshots.py`: compressed snapshot writer and reader
-- `src/qbp_sim/analysis.py`: snapshot summaries and plotting
-- `src/qbp_sim/cli.py`: command-line entry point
-- `linear.py`: separate LP benchmark model used for comparison against backpressure summaries
-- `tests/test_simulator.py`: unit, replay, trace, and gated stochastic simulator tests
+- `tests/`: subsystem-organized unit, replay, trace, experiment, LP, import-contract, and gated stochastic simulator tests
+
+The compatibility modules `qbp_sim.simulator`, `qbp_sim.events`, `qbp_sim.trace`, and
+`qbp_sim.snapshots` remain available for existing imports. The root-level `linear.py` entry point
+has intentionally moved to `qbp_sim.lp`.
 
 ## Typical commands
 

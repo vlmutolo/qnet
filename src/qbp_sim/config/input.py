@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from qbp_sim.simulator import (
+from qbp_sim.core.types import (
     VIRTUAL_SWAP_POLICY_GLOBAL,
     VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     GillespieQBPConfig,
