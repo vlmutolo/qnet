@@ -13,6 +13,7 @@ IntMatrix = NDArray[np.int64]
 
 VIRTUAL_SWAP_POLICY_GLOBAL = "global"
 VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY = "power_of_k_memory"
+VIRTUAL_SWAP_POLICY_MAX_MIN = "max_min"
 
 
 @dataclass(frozen=True, slots=True)

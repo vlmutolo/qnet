@@ -7,6 +7,7 @@ from pathlib import Path
 
 from qbp_sim.core.types import (
     VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_MAX_MIN,
     VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     GillespieQBPConfig,
     VirtualSwapPolicy,
@@ -20,7 +21,9 @@ def _add_virtual_swap_policy_args(command_parser: argparse.ArgumentParser) -> No
         choices=[
             VIRTUAL_SWAP_POLICY_GLOBAL,
             VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_MAX_MIN,
             "power-of-k-memory",
+            "max-min",
         ],
         default=None,
         help="Override the virtual swap scheduler policy.",

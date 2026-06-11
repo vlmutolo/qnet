@@ -20,7 +20,7 @@ from qbp_sim.experiments import (
 from qbp_sim.progress import should_use_progress
 from qbp_sim.simulator import QBPEventApplier, GillespieQBPEventProducer
 from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPResult, GillespieQBPSimulator, VirtualSwapPolicy
-from qbp_sim.simulator import QBPState, replay_event_stream
+from qbp_sim.simulator import QBPState, VIRTUAL_SWAP_POLICY_MAX_MIN, replay_event_stream
 from qbp_sim.snapshots import QBPSnapshot, SnapshotReader, SnapshotWriter
 from qbp_sim.trace import (
     TRACE_TIME_MODE_FULL,
@@ -63,6 +63,7 @@ __all__ = [
     "SnapshotWriter",
     "TRACE_TIME_MODE_FULL",
     "TRACE_TIME_MODE_NONE",
+    "VIRTUAL_SWAP_POLICY_MAX_MIN",
     "main",
     "load_experiment_matrix_config",
     "load_simulation_config",

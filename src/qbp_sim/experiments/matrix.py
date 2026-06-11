@@ -7,7 +7,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from qbp_sim.config import VirtualSwapPolicyConfig
-from qbp_sim.core.types import VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY
+from qbp_sim.core.types import (
+    VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_MAX_MIN,
+    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+)
 
 TopologyName = Literal["cycle", "chain", "grid"]
 TraceFloatPrecision = Literal["float16", "float32", "float64"]
@@ -35,7 +39,7 @@ class ExperimentPolicyConfig(BaseModel):
 
     mode: str = Field(
         default=VIRTUAL_SWAP_POLICY_GLOBAL,
-        description="Virtual swap policy: global or power_of_k_memory.",
+        description="Virtual swap policy: global, power_of_k_memory, or max_min.",
     )
     k: int | None = Field(
         default=None,
@@ -53,14 +57,19 @@ class ExperimentPolicyConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_policy(self) -> ExperimentPolicyConfig:
         self.mode = self.mode.replace("-", "_")
-        if self.mode not in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY}:
+        if self.mode not in {
+            VIRTUAL_SWAP_POLICY_GLOBAL,
+            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_MAX_MIN,
+        }:
             raise ValueError(
                 "policy mode must be either "
-                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r} or {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}."
+                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r}, {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}, "
+                f"or {VIRTUAL_SWAP_POLICY_MAX_MIN!r}."
             )
-        if self.mode == VIRTUAL_SWAP_POLICY_GLOBAL:
+        if self.mode in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_MAX_MIN}:
             if self.k is not None or self.memory is not None:
-                raise ValueError("global policy must not set k or memory.")
+                raise ValueError(f"{self.mode} policy must not set k or memory.")
             return self
         if self.k is None or self.k <= 0:
             raise ValueError("power_of_k_memory policy requires positive k.")
@@ -74,6 +83,8 @@ class ExperimentPolicyConfig(BaseModel):
             return self.label
         if self.mode == VIRTUAL_SWAP_POLICY_GLOBAL:
             return "full info"
+        if self.mode == VIRTUAL_SWAP_POLICY_MAX_MIN:
+            return "max-min"
         return f"limited k={self.k}, m={self.memory}"
 
     def to_virtual_swap_policy_config(self) -> VirtualSwapPolicyConfig:

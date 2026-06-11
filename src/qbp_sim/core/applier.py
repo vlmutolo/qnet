@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from qbp_sim.core.kernels import (
     _apply_demand_arrival,
+    _apply_direct_physical_swap,
     _apply_pair_generation,
     _apply_physical_service,
     _apply_physical_swap,
+    _apply_service_request,
     _apply_virtual_service,
     _apply_virtual_swap,
 )
@@ -50,6 +52,13 @@ class QBPEventApplier:
             state.total_virtual_backlog_count -= 1
             state.total_service_deficit_count += 1
             state.total_scarcity_count += 1
+        elif event.event_type == "service_request":
+            x = _require(event.x, "x")
+            y = _require(event.y, "y")
+            _apply_service_request(state.d, state.h_r, x, y)
+            state.virtual_service_requests += 1
+            state.total_virtual_backlog_count -= 1
+            state.total_service_deficit_count += 1
         elif event.event_type == "virtual_swap":
             swap_idx = _require(event.swap_idx, "swap_idx")
             i = _require(event.i, "i")
@@ -89,6 +98,15 @@ class QBPEventApplier:
             state.swaps_completed += 1
             state.total_inventory_count -= 1
             state.total_swap_deficit_count -= 1
+        elif event.event_type == "max_min_swap":
+            _apply_direct_physical_swap(
+                state.q,
+                _require(event.i, "i"),
+                _require(event.y, "y"),
+                _require(event.z, "z"),
+            )
+            state.swaps_completed += 1
+            state.total_inventory_count -= 1
         else:
             raise ValueError(f"Unknown event type: {event.event_type}")
 

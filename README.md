@@ -80,19 +80,31 @@ which entries the simulated actor is allowed to inspect while choosing swaps.
 Set `memory` to `0` for a query-only variant that picks from the fresh `k` candidates without
 carrying remembered candidates across refreshes.
 
+The `max_min` policy implements the HotNets path-oblivious balancing baseline. It is not a
+backpressure policy: it chooses physical swaps from current inventory `Q`, not scarcity pressure
+`alpha`. At a swap opportunity, node `i` marks `(y,z)` preferred when both input inventories
+`Q[i,y]` and `Q[i,z]` exceed the output inventory `Q[y,z]` by more than one, then chooses the
+preferred output edge with minimum `Q[y,z]`. Demand admission in this mode moves requests directly
+to pending physical service without updating `alpha`, so comparisons against backpressure separate
+the inventory-balancing baseline from the demand-aware control law.
+
 The runtime topology is inferred from `generation_rates > 0`, and service hazards default to the
 requested `consumption_rates` on each demanded pair times `capacity_headroom`.
 
-The Gillespie engine currently supports six event families:
+The Gillespie engine currently supports these event families:
 
 - demand arrivals
 - direct Bell-pair generation
 - virtual service requests
+- direct service-request admission for max-min mode
 - virtual swap requests
+- max-min inventory-balancing physical swaps
 - physical service realizations
 - physical swap realizations
 
-Virtual service and swap decisions evolve `gamma` and `alpha` without checking current Bell-pair availability. Physical service and swap events then realize those queued requests from `H^R` and `H^mu` whenever inventory is available.
+Backpressure virtual service and swap decisions evolve `gamma`/`D` and `alpha` without checking
+current Bell-pair availability. Physical service and swap events then realize those queued requests
+from `H^R` and `H^mu` whenever inventory is available.
 
 The service ratio tracked in snapshots is currently:
 
@@ -131,6 +143,7 @@ starting simulations, so a runner can decide which cases to schedule, paralleliz
   "headrooms": [1.0, 1.01],
   "policies": [
     {"mode": "global", "label": "full info"},
+    {"mode": "max_min"},
     {"mode": "power_of_k_memory", "k": 2, "memory": 2}
   ],
   "seed_offsets": [0, 100],
@@ -140,8 +153,8 @@ starting simulations, so a runner can decide which cases to schedule, paralleliz
 }
 ```
 
-The core axes are topology, graph size, consumption-demand sparsity, capacity headroom, virtual
-swap policy, generation/consumption/swap scale factors, stochastic seed replicate, trace precision,
+The core axes are topology, graph size, consumption-demand sparsity, capacity headroom, swap
+policy, generation/consumption/swap scale factors, stochastic seed replicate, trace precision,
 trace time mode, and instant physical-fulfillment modes.
 
 ## Layout

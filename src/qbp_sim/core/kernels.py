@@ -29,6 +29,26 @@ def _compute_active_virtual_service_rates(
 
 
 @njit(cache=True)
+def _compute_active_service_request_rates(
+    d: IntMatrix,
+    pair_u: IntArray1D,
+    pair_v: IntArray1D,
+    service_pair_rates: Array1D,
+    out: Array1D,
+) -> float:
+    total = 0.0
+    for idx in range(pair_u.shape[0]):
+        x = pair_u[idx]
+        y = pair_v[idx]
+        rate = 0.0
+        if d[x, y] > 0:
+            rate = service_pair_rates[idx]
+        out[idx] = rate
+        total += rate
+    return total
+
+
+@njit(cache=True)
 def _compute_active_physical_service_rates(
     q: IntMatrix,
     h_r: IntMatrix,
@@ -69,6 +89,55 @@ def _best_virtual_swap_for_node(
             best_weight = weight
             best_idx = idx
     return best_weight, best_idx
+
+
+@njit(cache=True)
+def _best_max_min_swap_for_node(
+    q: IntMatrix,
+    node: int,
+    swap_node_starts: IntArray1D,
+    swap_y: IntArray1D,
+    swap_z: IntArray1D,
+) -> tuple[int, int]:
+    best_output = 9223372036854775807
+    best_idx = -1
+    start = swap_node_starts[node]
+    stop = swap_node_starts[node + 1]
+    for idx in range(start, stop):
+        y = swap_y[idx]
+        z = swap_z[idx]
+        output_count = q[y, z]
+        if q[node, y] > output_count + 1 and q[node, z] > output_count + 1:
+            if output_count < best_output or (output_count == best_output and (best_idx < 0 or idx < best_idx)):
+                best_output = output_count
+                best_idx = idx
+    if best_idx < 0:
+        return -1, -1
+    return best_output, best_idx
+
+
+@njit(cache=True)
+def _compute_active_max_min_swap_rates(
+    q: IntMatrix,
+    swap_node_starts: IntArray1D,
+    swap_y: IntArray1D,
+    swap_z: IntArray1D,
+    swap_rates: Array1D,
+    best_output: IntArray1D,
+    best_idx: IntArray1D,
+    node_rates: Array1D,
+) -> float:
+    total = 0.0
+    for node in range(swap_node_starts.shape[0] - 1):
+        output_count, idx = _best_max_min_swap_for_node(q, node, swap_node_starts, swap_y, swap_z)
+        best_output[node] = output_count
+        best_idx[node] = idx
+        rate = 0.0
+        if idx >= 0:
+            rate = swap_rates[node]
+        node_rates[node] = rate
+        total += rate
+    return total
 
 
 @njit(cache=True)
@@ -225,6 +294,17 @@ def _apply_virtual_service(d: IntMatrix, alpha: IntMatrix, h_r: IntMatrix, x: in
 
 
 @njit(cache=True)
+def _apply_service_request(d: IntMatrix, h_r: IntMatrix, x: int, y: int) -> None:
+    backlog = d[x, y] - 1
+    pending = h_r[x, y] + 1
+
+    d[x, y] = backlog
+    d[y, x] = backlog
+    h_r[x, y] = pending
+    h_r[y, x] = pending
+
+
+@njit(cache=True)
 def _apply_virtual_swap(alpha: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, y: int, z: int) -> None:
     alpha_iy = alpha[i, y] + 1
     alpha_iz = alpha[i, z] + 1
@@ -265,6 +345,20 @@ def _apply_physical_swap(q: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, 
     q[y, z] = q_yz
     q[z, y] = q_yz
     h_mu[swap_idx] -= 1
+
+
+@njit(cache=True)
+def _apply_direct_physical_swap(q: IntMatrix, i: int, y: int, z: int) -> None:
+    q_iy = q[i, y] - 1
+    q_iz = q[i, z] - 1
+    q_yz = q[y, z] + 1
+
+    q[i, y] = q_iy
+    q[y, i] = q_iy
+    q[i, z] = q_iz
+    q[z, i] = q_iz
+    q[y, z] = q_yz
+    q[z, y] = q_yz
 
 
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from qbp_sim.core.types import (
     VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_MAX_MIN,
     VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     GillespieQBPConfig,
     VirtualSwapPolicy,
@@ -20,7 +21,7 @@ class VirtualSwapPolicyConfig(BaseModel):
 
     mode: str = Field(
         default=VIRTUAL_SWAP_POLICY_GLOBAL,
-        description="Virtual swap policy: global or power_of_k_memory.",
+        description="Virtual swap policy: global, power_of_k_memory, or max_min.",
     )
     k: int = Field(
         default=0,
@@ -34,15 +35,22 @@ class VirtualSwapPolicyConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_policy(self) -> VirtualSwapPolicyConfig:
         mode = self.mode.replace("-", "_")
-        if mode not in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY}:
+        if mode not in {
+            VIRTUAL_SWAP_POLICY_GLOBAL,
+            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_MAX_MIN,
+        }:
             raise ValueError(
                 "virtual_swap_policy.mode must be either "
-                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r} or {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}."
+                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r}, {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}, "
+                f"or {VIRTUAL_SWAP_POLICY_MAX_MIN!r}."
             )
         if self.k < 0 or self.memory < 0:
             raise ValueError("virtual_swap_policy k and memory must be non-negative.")
         if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and self.k <= 0:
             raise ValueError("power_of_k_memory virtual swap policy requires positive k.")
+        if mode == VIRTUAL_SWAP_POLICY_MAX_MIN and (self.k != 0 or self.memory != 0):
+            raise ValueError("max_min virtual swap policy does not use k or memory.")
         self.mode = mode
         return self
 

@@ -16,11 +16,11 @@ class InstantFulfillmentMixin:
     def _instant_frontier_for_event(self, event: QBPEvent) -> tuple[int, int, int, int]:
         if event.event_type == "pair_generation":
             return INSTANT_FRONTIER_EDGE, _require(event.x, "x"), _require(event.y, "y"), -1
-        if event.event_type == "virtual_service" and self.config.instant_service_fulfillment:
+        if event.event_type in {"virtual_service", "service_request"} and self.config.instant_service_fulfillment:
             return INSTANT_FRONTIER_EDGE, _require(event.x, "x"), _require(event.y, "y"), -1
         if event.event_type == "virtual_swap" and self.config.instant_swap_fulfillment:
             return INSTANT_FRONTIER_SWAP, -1, -1, _require(event.swap_idx, "swap_idx")
-        if event.event_type == "physical_swap":
+        if event.event_type in {"physical_swap", "max_min_swap"}:
             return INSTANT_FRONTIER_EDGE, _require(event.y, "y"), _require(event.z, "z"), -1
         return INSTANT_FRONTIER_NONE, -1, -1, -1
 

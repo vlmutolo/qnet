@@ -35,6 +35,7 @@ def test_experiment_matrix_expands_cartesian_product_and_slugs_cases() -> None:
         headrooms=[1.0, 1.01],
         policies=[
             ExperimentPolicyConfig(mode="global"),
+            ExperimentPolicyConfig(mode="max-min"),
             ExperimentPolicyConfig(mode="power-of-k-memory", k=2, memory=3),
         ],
         seed_base=10,
@@ -47,7 +48,7 @@ def test_experiment_matrix_expands_cartesian_product_and_slugs_cases() -> None:
 
     cases = config.cases()
 
-    assert len(cases) == 2 * 2 * 2 * 2 * 2 * 2 * 2
+    assert len(cases) == 2 * 2 * 2 * 2 * 3 * 2 * 2
     assert config.case_count == len(cases)
     assert {case.topology for case in cases} == {"cycle", "grid"}
     assert {case.n_nodes for case in cases} == {9, 16}
@@ -61,6 +62,7 @@ def test_experiment_matrix_expands_cartesian_product_and_slugs_cases() -> None:
         case.slug == "grid_n16_headroom_1p01_cons_frac_0p25_limited_k2_m3_seed126"
         for case in cases
     )
+    assert any(case.policy_mode == "max_min" and case.policy_label == "max-min" for case in cases)
 
 
 def test_experiment_matrix_loads_json_config(tmp_path) -> None:
@@ -74,6 +76,7 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
                 "headrooms": [1.01, 1.05],
                 "policies": [
                     {"mode": "global", "label": "full information"},
+                    {"mode": "max_min"},
                     {"mode": "power_of_k_memory", "k": 5, "memory": 0},
                 ],
                 "seed_base": 7,
@@ -91,8 +94,8 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
     loaded = load_experiment_matrix_config(config_path)
     cases = loaded.cases()
 
-    assert len(cases) == 4
-    assert {case.policy_label for case in cases} == {"full information", "limited k=5, m=0"}
+    assert len(cases) == 6
+    assert {case.policy_label for case in cases} == {"full information", "max-min", "limited k=5, m=0"}
     assert {case.capacity_headroom for case in cases} == {1.01, 1.05}
     assert all(case.topology == "chain" for case in cases)
     assert all(case.seed == 17 for case in cases)
@@ -103,6 +106,9 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
 def test_experiment_matrix_rejects_invalid_policy_and_sparsity() -> None:
     with pytest.raises(Exception, match="global policy must not set k"):
         ExperimentPolicyConfig(mode="global", k=1)
+
+    with pytest.raises(Exception, match="max_min policy must not set k"):
+        ExperimentPolicyConfig(mode="max_min", memory=1)
 
     with pytest.raises(Exception, match="positive k"):
         ExperimentPolicyConfig(mode="power_of_k_memory", k=0, memory=1)

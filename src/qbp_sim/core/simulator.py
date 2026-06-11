@@ -16,6 +16,7 @@ from qbp_sim.core.indexing import (
 from qbp_sim.core.producer import GillespieQBPEventProducer
 from qbp_sim.core.types import (
     VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_MAX_MIN,
     VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     GillespieQBPConfig,
     GillespieQBPResult,
@@ -380,10 +381,15 @@ class GillespieQBPSimulator(InstantFulfillmentMixin):
             policy = VirtualSwapPolicy(**policy)
 
         mode = str(policy.mode).replace("-", "_")
-        if mode not in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY}:
+        if mode not in {
+            VIRTUAL_SWAP_POLICY_GLOBAL,
+            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_MAX_MIN,
+        }:
             raise ValueError(
                 "virtual_swap_policy.mode must be either "
-                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r} or {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}."
+                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r}, {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}, "
+                f"or {VIRTUAL_SWAP_POLICY_MAX_MIN!r}."
             )
 
         k = int(policy.k)
@@ -392,5 +398,7 @@ class GillespieQBPSimulator(InstantFulfillmentMixin):
             raise ValueError("virtual_swap_policy k and memory must be non-negative.")
         if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and k <= 0:
             raise ValueError("power_of_k_memory virtual swap policy requires positive k.")
+        if mode == VIRTUAL_SWAP_POLICY_MAX_MIN and (k != 0 or memory != 0):
+            raise ValueError("max_min virtual swap policy does not use k or memory.")
 
         return VirtualSwapPolicy(mode=mode, k=k, memory=memory)
