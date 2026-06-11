@@ -32,6 +32,7 @@ def run_cycle_service_ratio_experiment(
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
     trace_float_precision: str = "float32",
+    trace_time_mode: str = "full",
     instant_service_fulfillment: bool = False,
     instant_swap_fulfillment: bool = False,
     progress: bool | None = None,
@@ -92,7 +93,11 @@ def run_cycle_service_ratio_experiment(
             simulator.reset_measurements(reset_time_origin=True)
             initial_state = _simulator_state_payload(simulator)
         snapshot_writer = _MemorySnapshotWriter()
-        with open_event_trace_writer(trace_path, float_precision=trace_float_precision) as trace_writer:
+        with open_event_trace_writer(
+            trace_path,
+            float_precision=trace_float_precision,
+            time_mode=trace_time_mode,
+        ) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -111,6 +116,7 @@ def run_cycle_service_ratio_experiment(
             sample_every=sample_every,
             burn_in_time=burn_in_time,
             trace_float_precision=trace_float_precision,
+            trace_time_mode=trace_time_mode,
             simulation_config_path=simulation_config_path,
             trace_path=trace_path,
             lp_json_path=lp_json_path,

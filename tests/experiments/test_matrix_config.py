@@ -24,6 +24,7 @@ def test_experiment_matrix_defaults_to_full_and_limited_policy_cases() -> None:
     assert cases[1].virtual_swap_policy.mode == "power_of_k_memory"
     assert cases[1].virtual_swap_policy.k == 1
     assert cases[1].virtual_swap_policy.memory == 1
+    assert {case.trace_time_mode for case in cases} == {"full"}
 
 
 def test_experiment_matrix_expands_cartesian_product_and_slugs_cases() -> None:
@@ -81,6 +82,7 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
                 "max_events": None,
                 "sample_every": 1000,
                 "trace_float_precision": "float32",
+                "trace_time_mode": "none",
             }
         ),
         encoding="utf-8",
@@ -95,6 +97,7 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
     assert all(case.topology == "chain" for case in cases)
     assert all(case.seed == 17 for case in cases)
     assert all(case.max_events is None for case in cases)
+    assert all(case.trace_time_mode == "none" for case in cases)
 
 
 def test_experiment_matrix_rejects_invalid_policy_and_sparsity() -> None:
@@ -106,4 +109,3 @@ def test_experiment_matrix_rejects_invalid_policy_and_sparsity() -> None:
 
     with pytest.raises(Exception, match="consumption_edge_fractions"):
         ExperimentMatrixConfig(consumption_edge_fractions=[0.0])
-

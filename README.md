@@ -135,13 +135,14 @@ starting simulations, so a runner can decide which cases to schedule, paralleliz
   ],
   "seed_offsets": [0, 100],
   "until_time": 100000.0,
-  "sample_every": 1000
+  "sample_every": 1000,
+  "trace_time_mode": "none"
 }
 ```
 
 The core axes are topology, graph size, consumption-demand sparsity, capacity headroom, virtual
 swap policy, generation/consumption/swap scale factors, stochastic seed replicate, trace precision,
-and instant physical-fulfillment modes.
+trace time mode, and instant physical-fulfillment modes.
 
 ## Layout
 
@@ -210,6 +211,9 @@ Columnar event traces (`.vortex` and `.parquet`) store `time`, `total_rate`, and
 `event_rate` as `float32` by default. Use `--trace-float-precision float64` when
 you need full precision, or `float16` only for short runs whose time/rate values
 fit in fp16 range.
+Use `--trace-time-mode none` to omit `time`, `total_rate`, and `event_rate` from JSONL,
+Parquet, and Vortex traces. That mode preserves event order and state-transition replay, but
+does not preserve the real simulation clock unless analysis supplies an external final time.
 
 Write sampled snapshots:
 

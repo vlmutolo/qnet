@@ -46,3 +46,10 @@ def test_cli_instant_service_fulfillment_flag_enables_runtime_config() -> None:
 
     assert config.instant_service_fulfillment is True
     assert config.instant_swap_fulfillment is True
+
+
+def test_cli_trace_time_mode_flag_is_available_for_trace_writers() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["example", "--trace", "events.vortex", "--trace-time-mode", "none"])
+
+    assert args.trace_time_mode == "none"

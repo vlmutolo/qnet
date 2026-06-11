@@ -134,6 +134,18 @@ def _add_trace_float_precision_arg(command_parser: argparse.ArgumentParser) -> N
     )
 
 
+def _add_trace_time_mode_arg(command_parser: argparse.ArgumentParser) -> None:
+    command_parser.add_argument(
+        "--trace-time-mode",
+        choices=("full", "none"),
+        default="full",
+        help=(
+            "Controls persisted timing/rate trace fields. "
+            "Use 'none' to omit time, total_rate, and event_rate for smaller traces that cannot reconstruct simulation time."
+        ),
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qbp-sim",
@@ -174,6 +186,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
     _add_trace_float_precision_arg(run_parser)
+    _add_trace_time_mode_arg(run_parser)
     run_parser.add_argument(
         "--snapshots",
         type=Path,
@@ -211,6 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
     _add_trace_float_precision_arg(example_parser)
+    _add_trace_time_mode_arg(example_parser)
     example_parser.add_argument(
         "--snapshots",
         type=Path,
@@ -354,6 +368,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to write LP outputs, simulation configs, compact Vortex event traces, and run metadata.",
     )
     _add_trace_float_precision_arg(cycle_parser)
+    _add_trace_time_mode_arg(cycle_parser)
     _add_instant_service_fulfillment_arg(cycle_parser)
     _add_instant_swap_fulfillment_arg(cycle_parser)
     cycle_parser.add_argument(
@@ -452,6 +467,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to write LP outputs, headroom configs, compact Vortex event traces, and run metadata.",
     )
     _add_trace_float_precision_arg(headroom_parser)
+    _add_trace_time_mode_arg(headroom_parser)
     _add_instant_service_fulfillment_arg(headroom_parser)
     _add_instant_swap_fulfillment_arg(headroom_parser)
     headroom_parser.add_argument(
@@ -548,6 +564,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to write LP outputs, policy configs, compact Vortex event traces, and run metadata.",
     )
     _add_trace_float_precision_arg(limited_parser)
+    _add_trace_time_mode_arg(limited_parser)
     _add_instant_service_fulfillment_arg(limited_parser)
     _add_instant_swap_fulfillment_arg(limited_parser)
     limited_parser.add_argument(

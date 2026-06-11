@@ -110,6 +110,7 @@ def _write_run_metadata(
     sample_every: int,
     burn_in_time: float,
     trace_float_precision: str,
+    trace_time_mode: str,
     simulation_config_path: Path,
     trace_path: Path,
     lp_json_path: Path,
@@ -127,6 +128,7 @@ def _write_run_metadata(
         "sample_every": sample_every,
         "burn_in_time": burn_in_time,
         "trace_float_precision": trace_float_precision,
+        "trace_time_mode": trace_time_mode,
         "hit_time_horizon": result.final_time >= until_time,
         "hit_event_cap": (
             False if max_events is None else result.events_processed >= max_events and result.final_time < until_time

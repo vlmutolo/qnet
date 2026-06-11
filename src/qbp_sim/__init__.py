@@ -23,6 +23,8 @@ from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPResult, GillespieQ
 from qbp_sim.simulator import QBPState, replay_event_stream
 from qbp_sim.snapshots import QBPSnapshot, SnapshotReader, SnapshotWriter
 from qbp_sim.trace import (
+    TRACE_TIME_MODE_FULL,
+    TRACE_TIME_MODE_NONE,
     EventTraceReader,
     EventTraceWriter,
     ParquetEventTraceReader,
@@ -59,6 +61,8 @@ __all__ = [
     "SnapshotReader",
     "SnapshotSummary",
     "SnapshotWriter",
+    "TRACE_TIME_MODE_FULL",
+    "TRACE_TIME_MODE_NONE",
     "main",
     "load_experiment_matrix_config",
     "load_simulation_config",

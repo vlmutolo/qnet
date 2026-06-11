@@ -37,7 +37,11 @@ def main(argv: list[str] | None = None) -> None:
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=_max_events_limit(args.max_events), sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
-            with open_event_trace_writer(args.trace, float_precision=args.trace_float_precision) as trace_writer:
+            with open_event_trace_writer(
+                args.trace,
+                float_precision=args.trace_float_precision,
+                time_mode=args.trace_time_mode,
+            ) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=_max_events_limit(args.max_events),
@@ -54,7 +58,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
         else:
             with open_event_trace_writer(
-                args.trace, float_precision=args.trace_float_precision
+                args.trace,
+                float_precision=args.trace_float_precision,
+                time_mode=args.trace_time_mode,
             ) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
@@ -83,7 +89,11 @@ def main(argv: list[str] | None = None) -> None:
         if args.trace is None and args.snapshots is None:
             result = sim.run(until_time=args.until, max_events=_max_events_limit(args.max_events), sample_every=args.sample_every)
         elif args.trace is not None and args.snapshots is None:
-            with open_event_trace_writer(args.trace, float_precision=args.trace_float_precision) as trace_writer:
+            with open_event_trace_writer(
+                args.trace,
+                float_precision=args.trace_float_precision,
+                time_mode=args.trace_time_mode,
+            ) as trace_writer:
                 result = sim.run(
                     until_time=args.until,
                     max_events=_max_events_limit(args.max_events),
@@ -100,7 +110,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
         else:
             with open_event_trace_writer(
-                args.trace, float_precision=args.trace_float_precision
+                args.trace,
+                float_precision=args.trace_float_precision,
+                time_mode=args.trace_time_mode,
             ) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
                 result = sim.run(
                     until_time=args.until,
@@ -172,6 +184,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
             trace_float_precision=args.trace_float_precision,
+            trace_time_mode=args.trace_time_mode,
             instant_service_fulfillment=args.instant_service_fulfillment,
             instant_swap_fulfillment=args.instant_swap_fulfillment,
         )
@@ -200,6 +213,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
             trace_float_precision=args.trace_float_precision,
+            trace_time_mode=args.trace_time_mode,
             instant_service_fulfillment=args.instant_service_fulfillment,
             instant_swap_fulfillment=args.instant_swap_fulfillment,
         )
@@ -229,6 +243,7 @@ def main(argv: list[str] | None = None) -> None:
             swap_rate=args.swap_rate,
             capacity_headroom=args.headroom,
             trace_float_precision=args.trace_float_precision,
+            trace_time_mode=args.trace_time_mode,
             instant_service_fulfillment=args.instant_service_fulfillment,
             instant_swap_fulfillment=args.instant_swap_fulfillment,
         )

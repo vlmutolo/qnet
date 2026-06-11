@@ -4,6 +4,7 @@ from qbp_sim.cli.parser import (
     _add_instant_service_fulfillment_arg,
     _add_instant_swap_fulfillment_arg,
     _add_trace_float_precision_arg,
+    _add_trace_time_mode_arg,
     _add_virtual_swap_policy_args,
     _apply_instant_service_fulfillment_arg,
     _apply_virtual_swap_policy_args,

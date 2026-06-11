@@ -5,6 +5,7 @@ from __future__ import annotations
 def test_public_package_imports_remain_available() -> None:
     from qbp_sim import ExperimentMatrixConfig
     from qbp_sim import GillespieQBPSimulator as PackageSimulator
+    from qbp_sim import TRACE_TIME_MODE_NONE
     from qbp_sim.config import SimulationInputConfig
     from qbp_sim.experiments import ExperimentPolicyConfig
     from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator
@@ -13,6 +14,7 @@ def test_public_package_imports_remain_available() -> None:
     assert PackageSimulator is GillespieQBPSimulator
     assert ExperimentMatrixConfig is not None
     assert ExperimentPolicyConfig is not None
+    assert TRACE_TIME_MODE_NONE == "none"
     assert GillespieQBPConfig is not None
     assert SimulationInputConfig is not None
     assert open_event_trace_writer is not None

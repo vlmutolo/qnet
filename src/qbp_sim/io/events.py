@@ -20,15 +20,16 @@ class QBPEvent:
     inventory_total: int | None = None
     scarcity_total: int | None = None
 
-    def to_dict(self) -> dict[str, int | float | str]:
+    def to_dict(self, *, include_time_values: bool = True) -> dict[str, int | float | str]:
         record: dict[str, int | float | str] = {
             "event_index": self.event_index,
-            "time": self.time,
-            "dt": self.dt,
-            "total_rate": self.total_rate,
             "event_type": self.event_type,
-            "event_rate": self.event_rate,
         }
+        if include_time_values:
+            record["time"] = self.time
+            record["dt"] = self.dt
+            record["total_rate"] = self.total_rate
+            record["event_rate"] = self.event_rate
         for name in (
             "swap_idx",
             "x",
@@ -48,11 +49,11 @@ class QBPEvent:
     def from_dict(cls, record: dict[str, int | float | str]) -> QBPEvent:
         return cls(
             event_index=int(record["event_index"]),
-            time=float(record["time"]),
-            dt=float(record["dt"]),
-            total_rate=float(record["total_rate"]),
+            time=float(record.get("time", 0.0)),
+            dt=float(record.get("dt", 0.0)),
+            total_rate=float(record.get("total_rate", 0.0)),
             event_type=str(record["event_type"]),
-            event_rate=float(record["event_rate"]),
+            event_rate=float(record.get("event_rate", 0.0)),
             swap_idx=_optional_int(record.get("swap_idx")),
             x=_optional_int(record.get("x")),
             y=_optional_int(record.get("y")),

@@ -35,6 +35,7 @@ def run_limited_info_service_ratio_experiment(
     swap_rate: float = 100.0,
     capacity_headroom: float = 1.01,
     trace_float_precision: str = "float32",
+    trace_time_mode: str = "full",
     instant_service_fulfillment: bool = False,
     instant_swap_fulfillment: bool = False,
     progress: bool | None = None,
@@ -106,7 +107,11 @@ def run_limited_info_service_ratio_experiment(
 
         simulator = GillespieQBPSimulator(config=simulation_input.to_runtime_config(), seed=run_seed)
         snapshot_writer = _MemorySnapshotWriter()
-        with open_event_trace_writer(trace_path, float_precision=trace_float_precision) as trace_writer:
+        with open_event_trace_writer(
+            trace_path,
+            float_precision=trace_float_precision,
+            time_mode=trace_time_mode,
+        ) as trace_writer:
             result = simulator.run(
                 until_time=until_time,
                 max_events=max_events,
@@ -125,6 +130,7 @@ def run_limited_info_service_ratio_experiment(
             sample_every=sample_every,
             burn_in_time=0.0,
             trace_float_precision=trace_float_precision,
+            trace_time_mode=trace_time_mode,
             simulation_config_path=simulation_config_path,
             trace_path=trace_path,
             lp_json_path=lp_json_path,

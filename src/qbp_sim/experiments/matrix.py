@@ -11,6 +11,7 @@ from qbp_sim.core.types import VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_P
 
 TopologyName = Literal["cycle", "chain", "grid"]
 TraceFloatPrecision = Literal["float16", "float32", "float64"]
+TraceTimeMode = Literal["full", "none"]
 
 
 def _slug_float(value: float) -> str:
@@ -109,6 +110,7 @@ class ExperimentMatrixCase(BaseModel):
     max_events: int | None
     sample_every: int
     trace_float_precision: TraceFloatPrecision
+    trace_time_mode: TraceTimeMode
     instant_service_fulfillment: bool
     instant_swap_fulfillment: bool
 
@@ -211,6 +213,13 @@ class ExperimentMatrixConfig(BaseModel):
     trace_float_precision: TraceFloatPrecision = Field(
         default="float32",
         description="Floating-point precision for columnar event traces.",
+    )
+    trace_time_mode: TraceTimeMode = Field(
+        default="full",
+        description=(
+            "Whether traces persist timing/rate fields. Use none for smaller traces that preserve event order "
+            "but cannot reconstruct simulation time."
+        ),
     )
     instant_service_fulfillment: list[bool] = Field(
         default_factory=lambda: [False],
@@ -322,6 +331,7 @@ class ExperimentMatrixConfig(BaseModel):
                     max_events=self.max_events,
                     sample_every=self.sample_every,
                     trace_float_precision=self.trace_float_precision,
+                    trace_time_mode=self.trace_time_mode,
                     instant_service_fulfillment=instant_service,
                     instant_swap_fulfillment=instant_swap,
                 )
@@ -339,4 +349,3 @@ def load_experiment_matrix_config(path: str | Path) -> ExperimentMatrixConfig:
         return ExperimentMatrixConfig.from_json_file(path)
     except ValidationError as exc:
         raise ValueError(str(exc)) from exc
-

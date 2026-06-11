@@ -29,8 +29,12 @@ TRACE_COLUMNS = (
     "inventory_total",
     "scarcity_total",
 )
+TIME_TRACE_COLUMNS = ("time", "total_rate", "event_rate")
 
 DEFAULT_TRACE_FLOAT_PRECISION = "float32"
+TRACE_TIME_MODE_FULL = "full"
+TRACE_TIME_MODE_NONE = "none"
+TRACE_TIME_MODES = {TRACE_TIME_MODE_FULL, TRACE_TIME_MODE_NONE}
 TRACE_FLOAT_TYPES = {
     "float16": pa.float16(),
     "float32": pa.float32(),
@@ -39,15 +43,28 @@ TRACE_FLOAT_TYPES = {
 FLOAT16_MAX_FINITE = 65_504.0
 
 
-def trace_schema(float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION) -> pa.Schema:
+def trace_schema(
+    float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
+    *,
+    time_mode: str = TRACE_TIME_MODE_FULL,
+) -> pa.Schema:
     float_type = _trace_float_type(float_precision)
-    return pa.schema(
+    normalized_time_mode = _trace_time_mode(time_mode)
+    fields: list[tuple[str, pa.DataType]] = [
+        ("event_index", pa.int64()),
+    ]
+    if normalized_time_mode == TRACE_TIME_MODE_FULL:
+        fields.extend(
+            [
+                ("time", float_type),
+                ("total_rate", float_type),
+            ]
+        )
+    fields.append(("event_type", pa.string()))
+    if normalized_time_mode == TRACE_TIME_MODE_FULL:
+        fields.append(("event_rate", float_type))
+    fields.extend(
         [
-            ("event_index", pa.int64()),
-            ("time", float_type),
-            ("total_rate", float_type),
-            ("event_type", pa.string()),
-            ("event_rate", float_type),
             ("swap_idx", pa.int64()),
             ("x", pa.int64()),
             ("y", pa.int64()),
@@ -58,6 +75,24 @@ def trace_schema(float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION) -> pa.Sch
             ("scarcity_total", pa.int64()),
         ]
     )
+    return pa.schema(fields)
+
+
+def trace_columns(*, time_mode: str = TRACE_TIME_MODE_FULL) -> tuple[str, ...]:
+    normalized_time_mode = _trace_time_mode(time_mode)
+    if normalized_time_mode == TRACE_TIME_MODE_FULL:
+        return TRACE_COLUMNS
+    return tuple(column for column in TRACE_COLUMNS if column not in TIME_TRACE_COLUMNS)
+
+
+def _trace_time_mode(time_mode: str) -> str:
+    normalized = time_mode.lower().replace("-", "_")
+    if normalized in {"timeless", "no_time", "notime"}:
+        normalized = TRACE_TIME_MODE_NONE
+    if normalized not in TRACE_TIME_MODES:
+        allowed = ", ".join(sorted(TRACE_TIME_MODES))
+        raise ValueError(f"time_mode must be one of: {allowed}.")
+    return normalized
 
 
 def _trace_float_type(float_precision: str) -> pa.DataType:
@@ -76,7 +111,9 @@ def _validate_float_columns(
 ) -> None:
     if float_precision != "float16":
         return
-    for column in ("time", "total_rate", "event_rate"):
+    for column in TIME_TRACE_COLUMNS:
+        if column not in columns:
+            continue
         for value in columns[column]:
             if value is not None and abs(float(value)) > FLOAT16_MAX_FINITE:
                 raise ValueError(
@@ -90,9 +127,16 @@ TRACE_SCHEMA = trace_schema("float64")
 class EventTraceWriter:
     """Write one JSON object per line into a Zstandard-compressed file."""
 
-    def __init__(self, path: str | Path, level: int = 3) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        level: int = 3,
+        *,
+        time_mode: str = TRACE_TIME_MODE_FULL,
+    ) -> None:
         self.path = Path(path)
         self.level = level
+        self.time_mode = _trace_time_mode(time_mode)
         self._raw_handle: io.BufferedWriter | None = None
         self._zstd_handle: io.BufferedWriter | None = None
         self._text_handle: io.TextIOWrapper | None = None
@@ -111,7 +155,10 @@ class EventTraceWriter:
     def write(self, event: QBPEvent) -> None:
         if self._text_handle is None:
             raise RuntimeError("Trace writer must be opened with a context manager before use.")
-        payload = json.dumps(event.to_dict(), separators=(",", ":"))
+        payload = json.dumps(
+            event.to_dict(include_time_values=self.time_mode == TRACE_TIME_MODE_FULL),
+            separators=(",", ":"),
+        )
         self._text_handle.write(payload)
         self._text_handle.write("\n")
 
@@ -133,6 +180,7 @@ class ParquetEventTraceWriter:
         buffer_size: int = 65_536,
         compression: str = "zstd",
         float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
+        time_mode: str = TRACE_TIME_MODE_FULL,
     ) -> None:
         if buffer_size <= 0:
             raise ValueError("buffer_size must be positive.")
@@ -140,13 +188,15 @@ class ParquetEventTraceWriter:
         self.buffer_size = buffer_size
         self.compression = compression
         self.float_precision = float_precision.lower()
-        self.schema = trace_schema(self.float_precision)
+        self.time_mode = _trace_time_mode(time_mode)
+        self.columns = trace_columns(time_mode=self.time_mode)
+        self.schema = trace_schema(self.float_precision, time_mode=self.time_mode)
         self._writer: pq.ParquetWriter | None = None
         self._columns: dict[str, list[int | float | str | None]] = self._new_column_buffer()
         self._row_count = 0
 
     def _new_column_buffer(self) -> dict[str, list[int | float | str | None]]:
-        return {column: [] for column in TRACE_COLUMNS}
+        return {column: [] for column in self.columns}
 
     def __enter__(self) -> ParquetEventTraceWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,10 +216,12 @@ class ParquetEventTraceWriter:
             raise RuntimeError("Parquet trace writer must be opened with a context manager before use.")
         columns = self._columns
         columns["event_index"].append(event.event_index)
-        columns["time"].append(event.time)
-        columns["total_rate"].append(event.total_rate)
+        if self.time_mode == TRACE_TIME_MODE_FULL:
+            columns["time"].append(event.time)
+            columns["total_rate"].append(event.total_rate)
         columns["event_type"].append(event.event_type)
-        columns["event_rate"].append(event.event_rate)
+        if self.time_mode == TRACE_TIME_MODE_FULL:
+            columns["event_rate"].append(event.event_rate)
         columns["swap_idx"].append(event.swap_idx)
         columns["x"].append(event.x)
         columns["y"].append(event.y)
@@ -210,6 +262,7 @@ class VortexEventTraceWriter:
         buffer_size: int = 65_536,
         queue_size: int = 8,
         float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
+        time_mode: str = TRACE_TIME_MODE_FULL,
     ) -> None:
         if buffer_size <= 0:
             raise ValueError("buffer_size must be positive.")
@@ -219,7 +272,9 @@ class VortexEventTraceWriter:
         self.buffer_size = buffer_size
         self.queue_size = queue_size
         self.float_precision = float_precision.lower()
-        self.schema = trace_schema(self.float_precision)
+        self.time_mode = _trace_time_mode(time_mode)
+        self.columns = trace_columns(time_mode=self.time_mode)
+        self.schema = trace_schema(self.float_precision, time_mode=self.time_mode)
         self._columns: dict[str, list[int | float | str | None]] = self._new_column_buffer()
         self._row_count = 0
         self._batch_queue: queue.Queue[pa.RecordBatch | None] | None = None
@@ -228,7 +283,7 @@ class VortexEventTraceWriter:
         self._closed = True
 
     def _new_column_buffer(self) -> dict[str, list[int | float | str | None]]:
-        return {column: [] for column in TRACE_COLUMNS}
+        return {column: [] for column in self.columns}
 
     def __enter__(self) -> VortexEventTraceWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,10 +302,12 @@ class VortexEventTraceWriter:
         self._raise_writer_error()
         columns = self._columns
         columns["event_index"].append(event.event_index)
-        columns["time"].append(event.time)
-        columns["total_rate"].append(event.total_rate)
+        if self.time_mode == TRACE_TIME_MODE_FULL:
+            columns["time"].append(event.time)
+            columns["total_rate"].append(event.total_rate)
         columns["event_type"].append(event.event_type)
-        columns["event_rate"].append(event.event_rate)
+        if self.time_mode == TRACE_TIME_MODE_FULL:
+            columns["event_rate"].append(event.event_rate)
         columns["swap_idx"].append(event.swap_idx)
         columns["x"].append(event.x)
         columns["y"].append(event.y)
@@ -376,9 +433,10 @@ class ParquetEventTraceReader:
         columns = [column for column in TRACE_COLUMNS if column in self._parquet_file.schema_arrow.names]
         for batch in self._parquet_file.iter_batches(batch_size=self.batch_size, columns=columns):
             for record in batch.to_pylist():
-                event_time = float(record["time"])
-                record["dt"] = event_time - previous_time
-                previous_time = event_time
+                if "time" in record:
+                    event_time = float(record["time"])
+                    record["dt"] = event_time - previous_time
+                    previous_time = event_time
                 yield QBPEvent.from_dict(record)
 
     def close(self) -> None:
@@ -410,9 +468,10 @@ class VortexEventTraceReader:
             table = pa.Table.from_batches([batch])
             columns = [column for column in TRACE_COLUMNS if column in table.column_names]
             for record in table.select(columns).to_pylist():
-                event_time = float(record["time"])
-                record["dt"] = event_time - previous_time
-                previous_time = event_time
+                if "time" in record:
+                    event_time = float(record["time"])
+                    record["dt"] = event_time - previous_time
+                    previous_time = event_time
                 yield QBPEvent.from_dict(record)
 
     def close(self) -> None:
@@ -423,14 +482,15 @@ def open_event_trace_writer(
     path: str | Path,
     *,
     float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
+    time_mode: str = TRACE_TIME_MODE_FULL,
 ):
     trace_path = Path(path)
     suffix = trace_path.suffix.lower()
     if suffix == ".vortex":
-        return VortexEventTraceWriter(trace_path, float_precision=float_precision)
+        return VortexEventTraceWriter(trace_path, float_precision=float_precision, time_mode=time_mode)
     if suffix == ".parquet":
-        return ParquetEventTraceWriter(trace_path, float_precision=float_precision)
-    return EventTraceWriter(trace_path)
+        return ParquetEventTraceWriter(trace_path, float_precision=float_precision, time_mode=time_mode)
+    return EventTraceWriter(trace_path, time_mode=time_mode)
 
 
 def open_event_trace_reader(path: str | Path):
