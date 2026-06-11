@@ -119,6 +119,30 @@ artifact type:
 
 Simulation, replay, and analysis are therefore mostly orthogonal modes.
 
+Experiment sweeps can be specified with `ExperimentMatrixConfig`, exported from
+`qbp_sim.experiments`. The matrix expands Cartesian-product axes into concrete cases without
+starting simulations, so a runner can decide which cases to schedule, parallelize, or skip:
+
+```json
+{
+  "topologies": ["chain", "grid"],
+  "graph_sizes": [9, 16],
+  "consumption_edge_fractions": [null, 0.25],
+  "headrooms": [1.0, 1.01],
+  "policies": [
+    {"mode": "global", "label": "full info"},
+    {"mode": "power_of_k_memory", "k": 2, "memory": 2}
+  ],
+  "seed_offsets": [0, 100],
+  "until_time": 100000.0,
+  "sample_every": 1000
+}
+```
+
+The core axes are topology, graph size, consumption-demand sparsity, capacity headroom, virtual
+swap policy, generation/consumption/swap scale factors, stochastic seed replicate, trace precision,
+and instant physical-fulfillment modes.
+
 ## Layout
 
 The package is organized into presentation-facing layers:

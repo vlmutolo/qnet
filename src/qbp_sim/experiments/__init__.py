@@ -17,6 +17,12 @@ from qbp_sim.experiments.common import (
 from qbp_sim.experiments.cycle import run_cycle_service_ratio_experiment
 from qbp_sim.experiments.headroom import run_headroom_experiment
 from qbp_sim.experiments.limited_info import run_limited_info_service_ratio_experiment
+from qbp_sim.experiments.matrix import (
+    ExperimentMatrixCase,
+    ExperimentMatrixConfig,
+    ExperimentPolicyConfig,
+    load_experiment_matrix_config,
+)
 from qbp_sim.experiments.plotting import (
     plot_cycle_service_ratio_runs,
     plot_headroom_runs,
@@ -25,8 +31,12 @@ from qbp_sim.experiments.plotting import (
 
 __all__ = [
     "CycleServiceRatioRun",
+    "ExperimentMatrixCase",
+    "ExperimentMatrixConfig",
+    "ExperimentPolicyConfig",
     "HeadroomRun",
     "LimitedInfoServiceRatioRun",
+    "load_experiment_matrix_config",
     "plot_cycle_service_ratio_runs",
     "plot_headroom_runs",
     "plot_limited_info_service_ratio_runs",

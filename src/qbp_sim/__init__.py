@@ -4,8 +4,12 @@ from qbp_sim.config import SimulationInputConfig, load_simulation_config
 from qbp_sim.events import QBPEvent
 from qbp_sim.experiments import (
     CycleServiceRatioRun,
+    ExperimentMatrixCase,
+    ExperimentMatrixConfig,
+    ExperimentPolicyConfig,
     HeadroomRun,
     LimitedInfoServiceRatioRun,
+    load_experiment_matrix_config,
     plot_cycle_service_ratio_runs,
     plot_headroom_runs,
     plot_limited_info_service_ratio_runs,
@@ -32,6 +36,9 @@ from qbp_sim.trace import (
 __all__ = [
     "EventTraceReader",
     "EventTraceWriter",
+    "ExperimentMatrixCase",
+    "ExperimentMatrixConfig",
+    "ExperimentPolicyConfig",
     "ParquetEventTraceReader",
     "ParquetEventTraceWriter",
     "VortexEventTraceReader",
@@ -53,6 +60,7 @@ __all__ = [
     "SnapshotSummary",
     "SnapshotWriter",
     "main",
+    "load_experiment_matrix_config",
     "load_simulation_config",
     "open_event_trace_reader",
     "open_event_trace_writer",
