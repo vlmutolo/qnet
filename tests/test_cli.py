@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from qbp_sim.analysis import plot_snapshot_metric, plot_snapshot_metric_series, summarize_snapshots
-from qbp_sim.cli import _apply_instant_service_fulfillment_arg, _build_parser
+from qbp_sim.cli import _apply_instant_service_fulfillment_arg, _build_parser, main
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.events import QBPEvent
 from qbp_sim.examples import build_four_node_counterexample
@@ -53,3 +53,76 @@ def test_cli_trace_time_mode_flag_is_available_for_trace_writers() -> None:
     args = parser.parse_args(["example", "--trace", "events.vortex", "--trace-time-mode", "none"])
 
     assert args.trace_time_mode == "none"
+
+
+def test_cli_help_is_available(capsys) -> None:
+    parser = _build_parser()
+    try:
+        parser.parse_args(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("Expected argparse help to exit.")
+
+    captured = capsys.readouterr()
+    assert "Continuous-time Gillespie simulation" in captured.out
+
+
+def test_cli_matrix_dry_run_expands_cases(tmp_path, capsys) -> None:
+    config_path = tmp_path / "matrix.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "topologies": ["cycle"],
+                "graph_sizes": [3],
+                "policies": [
+                    {"mode": "global"},
+                    {"mode": "power_of_k_memory", "k": 1, "memory": 1},
+                ],
+                "until_time": 1.0,
+                "sample_every": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main(["matrix", "--config", str(config_path), "--output-dir", str(tmp_path / "runs"), "--dry-run"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["case_count"] == 2
+    assert [case["policy_mode"] for case in payload["cases"]] == ["global", "power_of_k_memory"]
+    assert not (tmp_path / "runs").exists()
+
+
+def test_cli_matrix_tiny_run_writes_artifacts(tmp_path) -> None:
+    config_path = tmp_path / "matrix.json"
+    output_dir = tmp_path / "runs"
+    config_path.write_text(
+        json.dumps(
+            {
+                "topologies": ["cycle"],
+                "graph_sizes": [3],
+                "consumption_edge_fractions": [None],
+                "headrooms": [1.01],
+                "policies": [{"mode": "global"}],
+                "gen_scales": [10.0],
+                "cons_scales": [0.1],
+                "swap_rates": [20.0],
+                "until_time": 1.0,
+                "max_events": 200,
+                "sample_every": 10,
+                "trace_time_mode": "none",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main(["matrix", "--config", str(config_path), "--output-dir", str(output_dir)])
+
+    summary_path = output_dir / "summary.csv"
+    case_dirs = [path for path in output_dir.iterdir() if path.is_dir()]
+    assert summary_path.exists()
+    assert len(case_dirs) == 1
+    assert (case_dirs[0] / "simulation_config.json").exists()
+    assert (case_dirs[0] / "events.vortex").exists()
+    assert (case_dirs[0] / "run_metadata.json").exists()

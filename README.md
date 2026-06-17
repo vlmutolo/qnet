@@ -20,7 +20,15 @@ uv run qbp-sim example --until 50 --trace output/traces/example.vortex
 uv run qbp-sim example --until 50 --snapshots output/snapshots/example.jsonl.zst
 uv run qbp-sim replay --trace output/traces/example.vortex
 uv run qbp-sim analyze --snapshots output/snapshots/example.jsonl.zst
+uv run qbp-sim matrix --config docs/examples/matrix_config.json --output-dir output/matrix_demo --dry-run
 uv run pytest
+```
+
+The user manual lives in `docs/manual.typ` and is rendered to `docs/qbp-sim.pdf`.
+Build it with:
+
+```bash
+typst compile docs/manual.typ docs/qbp-sim.pdf
 ```
 
 ## Current model
@@ -131,9 +139,9 @@ artifact type:
 
 Simulation, replay, and analysis are therefore mostly orthogonal modes.
 
-Experiment sweeps can be specified with `ExperimentMatrixConfig`, exported from
-`qbp_sim.experiments`. The matrix expands Cartesian-product axes into concrete cases without
-starting simulations, so a runner can decide which cases to schedule, parallelize, or skip:
+Experiment sweeps can be specified with `ExperimentMatrixConfig`, exported from the root
+`qbp_sim` facade and from `qbp_sim.experiments`. The matrix expands Cartesian-product axes into
+concrete cases and can be inspected or run through the generic matrix command:
 
 ```json
 {
@@ -157,10 +165,18 @@ The core axes are topology, graph size, consumption-demand sparsity, capacity he
 policy, generation/consumption/swap scale factors, stochastic seed replicate, trace precision,
 trace time mode, and instant physical-fulfillment modes.
 
+```bash
+uv run qbp-sim matrix --config docs/examples/matrix_config.json --output-dir output/matrix_demo
+```
+
+Each matrix case writes `lp_solution.json`, `simulation_config.json`, `events.vortex`, and
+`run_metadata.json`; the matrix output directory also gets `summary.csv`.
+
 ## Layout
 
 The package is organized into presentation-facing layers:
 
+- `src/qbp_sim/facade.py`: public Python API for consumer scripts
 - `src/qbp_sim/core/`: simulator types, indexing helpers, numba kernels, event applier, event producer, instant-fulfillment frontier, run loop, and replay helper
 - `src/qbp_sim/io/`: concrete event records, event traces, and sampled snapshots
 - `src/qbp_sim/config/`: Pydantic JSON input config and runtime conversion
@@ -170,6 +186,11 @@ The package is organized into presentation-facing layers:
 - `src/qbp_sim/lp/`: separate LP benchmark model used for comparison against backpressure summaries
 - `src/qbp_sim/examples.py`: built-in example networks
 - `tests/`: subsystem-organized unit, replay, trace, experiment, LP, import-contract, and gated stochastic simulator tests
+
+The root `qbp_sim` package intentionally exports only the consumer-facing facade: JSON config
+types, experiment matrix types, `RunOptions`, `RunOutput`, `run_simulation`, `replay_trace`, and
+`build_four_node_example_config`. Developer-level internals remain importable from explicit
+subpackages such as `qbp_sim.core`, `qbp_sim.io`, `qbp_sim.simulator`, and `qbp_sim.lp`.
 
 The compatibility modules `qbp_sim.simulator`, `qbp_sim.events`, `qbp_sim.trace`, and
 `qbp_sim.snapshots` remain available for existing imports. The root-level `linear.py` entry point
@@ -212,6 +233,12 @@ Compare service-gap decay under different capacity-headroom multipliers:
 
 ```bash
 uv run qbp-sim headroom-service-ratio --n 16 --until 10000 --headrooms 1.0 1.01 1.05
+```
+
+Run a generic experiment matrix:
+
+```bash
+uv run qbp-sim matrix --config docs/examples/matrix_config.json --output-dir output/matrix_demo
 ```
 
 Write a compact Vortex event trace:
@@ -278,6 +305,15 @@ Run the gated stochastic checks:
 ```bash
 QBP_SIM_RUN_GATED_TESTS=1 uv run pytest
 ```
+
+Build distributable Python artifacts:
+
+```bash
+uv build
+```
+
+GitHub Actions also includes a `build` workflow that runs tests, renders `docs/qbp-sim.pdf`,
+builds the wheel/source distribution, and uploads those files as workflow artifacts.
 
 Long-running simulations and analysis jobs should be managed with `pueue` so they can continue
 outside the active shell session. Generated experiment outputs belong under `output/`, which is

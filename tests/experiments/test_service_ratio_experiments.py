@@ -16,10 +16,12 @@ from qbp_sim.config import SimulationInputConfig
 from qbp_sim.events import QBPEvent
 from qbp_sim.examples import build_four_node_counterexample
 from qbp_sim.experiments import (
-    _apply_capacity_headroom,
-    _cycle_consumption_edge_fraction,
     plot_limited_info_service_ratio_runs,
     run_limited_info_service_ratio_experiment,
+)
+from qbp_sim.experiments.common import (
+    _apply_capacity_headroom,
+    _cycle_consumption_edge_fraction,
 )
 from qbp_sim.lp import linear as linear_module
 from qbp_sim.progress import should_use_progress

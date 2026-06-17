@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+import json
+
 from qbp_sim.analysis import plot_snapshot_metric, summarize_snapshots
 from qbp_sim.cli.parser import (
     _apply_instant_service_fulfillment_arg,
@@ -17,9 +19,11 @@ from qbp_sim.experiments import (
     plot_headroom_runs,
     plot_limited_info_service_ratio_runs,
     run_cycle_service_ratio_experiment,
+    run_experiment_matrix,
     run_headroom_experiment,
     run_limited_info_service_ratio_experiment,
 )
+from qbp_sim.experiments import load_experiment_matrix_config
 from qbp_sim.io.snapshots import SnapshotReader, SnapshotWriter
 from qbp_sim.io.trace import open_event_trace_reader, open_event_trace_writer
 
@@ -258,3 +262,25 @@ def main(argv: list[str] | None = None) -> None:
                 f"samples={summary.num_snapshots} trace_path={run.trace_path} metadata_path={run.metadata_path}"
             )
         print(f"\nWrote plot to {args.plot_out}")
+    if args.command == "matrix":
+        matrix = load_experiment_matrix_config(args.config)
+        cases = matrix.cases()
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {
+                        "case_count": len(cases),
+                        "cases": [case.model_dump(mode="json") for case in cases],
+                    },
+                    indent=2,
+                )
+            )
+            return
+        runs = run_experiment_matrix(matrix, output_dir=args.output_dir)
+        print("Experiment matrix")
+        print(f"cases={len(runs)} summary_path={args.output_dir / 'summary.csv'}")
+        for run in runs:
+            print(
+                f"case={run.case.slug} final_time={run.result['final_time']:.3f} "
+                f"service_ratio={run.result['service_ratio']:.6f} trace_path={run.trace_path}"
+            )

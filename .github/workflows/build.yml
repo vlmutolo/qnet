@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Typst
+        uses: typst-community/setup-typst@v4
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Compile manual
+        run: typst compile docs/manual.typ docs/qbp-sim.pdf
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Upload Python package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbp-sim-python-package
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: Upload rendered manual
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbp-sim-manual
+          path: docs/qbp-sim.pdf

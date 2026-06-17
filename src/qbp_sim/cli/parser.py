@@ -583,4 +583,28 @@ def _build_parser() -> argparse.ArgumentParser:
         default=100.0,
         help="Positive lower bound for the log-scaled simulation-time axis.",
     )
+
+    matrix_parser = subparsers.add_parser(
+        "matrix",
+        help="Run or inspect a JSON experiment matrix.",
+    )
+    matrix_parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        metavar="INFILE",
+        help="Path to a JSON experiment matrix config.",
+    )
+    matrix_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output/matrix"),
+        metavar="OUTDIR",
+        help="Directory for one subdirectory per resolved matrix case plus summary.csv.",
+    )
+    matrix_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print expanded cases as JSON without solving LPs or running simulations.",
+    )
     return parser
