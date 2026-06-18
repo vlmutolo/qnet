@@ -97,7 +97,7 @@ def main() -> None:
         summaries.append(final_service_summary(trace_path, label))
 
     df = pl.concat(frames)
-    plot_path = output_dir / "policy_service_ratio.html"
+    plot_path = output_dir / "policy_service_ratio.png"
     chart = (
         alt.Chart(df)
         .mark_line(strokeWidth=2)
@@ -109,7 +109,7 @@ def main() -> None:
         )
         .properties(width=860, height=460, title="Policy Comparison")
     )
-    chart.save(plot_path)
+    chart.save(plot_path, ppi=300)
 
     final = pl.concat(summaries).sort("policy")
     print(final)

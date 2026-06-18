@@ -52,7 +52,7 @@ def main() -> None:
     output_dir = Path("output/examples/01_basic_run_service_ratio")
     output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = output_dir / "events.vortex"
-    plot_path = output_dir / "service_ratio.html"
+    plot_path = output_dir / "service_ratio.png"
 
     result = run_simulation(
         build_config(),
@@ -77,7 +77,7 @@ def main() -> None:
         )
         .properties(width=800, height=420, title="Basic BP Service Ratio")
     )
-    chart.save(plot_path)
+    chart.save(plot_path, ppi=300)
 
     print(f"trace={trace_path}")
     print(f"plot={plot_path}")

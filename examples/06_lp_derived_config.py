@@ -74,7 +74,7 @@ def main() -> None:
     output_dir = Path("output/examples/06_lp_derived_config")
     output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = output_dir / "events.vortex"
-    plot_path = output_dir / "lp_derived_service_ratio.html"
+    plot_path = output_dir / "lp_derived_service_ratio.png"
 
     config = build_lp_derived_config()
     run = run_simulation(
@@ -100,7 +100,7 @@ def main() -> None:
         )
         .properties(width=800, height=420, title="LP-Derived BP Config")
     )
-    chart.save(plot_path)
+    chart.save(plot_path, ppi=300)
 
     print(f"trace={trace_path}")
     print(f"plot={plot_path}")

@@ -71,7 +71,7 @@ def main() -> None:
         frames.append(service_gap_frame(trace_path, headroom))
 
     df = pl.concat(frames)
-    plot_path = output_dir / "headroom_service_gap.html"
+    plot_path = output_dir / "headroom_service_gap.png"
     chart = (
         alt.Chart(df)
         .mark_line(strokeWidth=2)
@@ -83,7 +83,7 @@ def main() -> None:
         )
         .properties(width=860, height=460, title="Headroom Sweep")
     )
-    chart.save(plot_path)
+    chart.save(plot_path, ppi=300)
     print(f"plot={plot_path}")
 
 

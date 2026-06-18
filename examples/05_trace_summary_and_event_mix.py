@@ -116,8 +116,8 @@ def main() -> None:
         )
         .properties(width=760, height=320, title="Aggregate State")
     )
-    plot_path = output_dir / "trace_summary.html"
-    (event_chart & state_chart).save(plot_path)
+    plot_path = output_dir / "trace_summary.png"
+    (event_chart & state_chart).save(plot_path, ppi=300)
 
     print(summary)
     print(f"trace={trace_path}")
