@@ -1,23 +1,22 @@
-# qbp-sim docs
+# Documentation
 
-This directory contains the user-facing Typst manual and small JSON examples.
+This directory contains the Typst manual and JSON examples.
 
-- `manual.typ`: canonical documentation source.
+- `manual.typ`: manual source.
 - `qbp-sim.pdf`: rendered manual.
 - `examples/basic_config.json`: minimal simulation config.
-- `examples/matrix_config.json`: tiny experiment matrix used in the manual and smoke tests.
+- `examples/matrix_config.json`: matrix config used by docs and smoke tests.
 
-Build the PDF with:
+Build the manual:
 
 ```bash
 typst compile docs/manual.typ docs/qbp-sim.pdf
 ```
 
-Build Python package artifacts with:
+Build Python artifacts:
 
 ```bash
 uv build
 ```
 
-The GitHub Actions `build` workflow runs tests, renders the manual, builds the wheel/source
-distribution, and uploads those files as workflow artifacts.
+The GitHub Actions `build` workflow runs tests, renders the manual, builds the wheel and source distribution, and uploads those files as workflow artifacts.

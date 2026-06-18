@@ -6,13 +6,15 @@
 
 = qbp-sim User Guide
 
-`qbp-sim` is a continuous-time Gillespie simulator for quantum-network routing experiments inspired by quantum backpressure. The package is designed to be used from typed JSON configs and the `qbp-sim` command-line interface. A small Python facade is available for scripts that need programmatic control.
+`qbp-sim` runs continuous-time Gillespie simulations for quantum-network routing experiments based on backpressure-style control. The main interfaces are typed JSON configs, the `qbp-sim` CLI, and the Python facade.
 
-The simulator is not a line-by-line reproduction of the paper's slotted theorem. It is a continuous-time analogue with explicit event traces, replay, and experiment helpers. The LP module is a separate global average-rate benchmark used to generate or compare against simulation configs; it is not the same controller as the stochastic simulator.
+The simulator records concrete event traces. A trace can be replayed to reconstruct the same state transitions without resampling randomness.
+
+The `qbp_sim.lp` module solves a global average-rate linear program. It produces LP outputs and simulator configs for benchmark instances. The LP is an aggregate-rate optimizer; the Gillespie simulator is a stochastic event process.
 
 = Installation
 
-Use `uv` for this repository:
+Use `uv`:
 
 ```bash
 uv sync --all-groups
@@ -33,13 +35,13 @@ Run the built-in four-node example:
 uv run qbp-sim example --until 50 --seed 0
 ```
 
-Run from a JSON config:
+Run a JSON config:
 
 ```bash
 uv run qbp-sim run --config docs/examples/basic_config.json --until 50
 ```
 
-Save a compact Vortex event trace:
+Write a Vortex event trace:
 
 ```bash
 uv run qbp-sim run \
@@ -48,19 +50,30 @@ uv run qbp-sim run \
   --trace output/traces/basic.vortex
 ```
 
-Replay a trace against the built-in example:
+Write a Parquet event trace:
+
+```bash
+uv run qbp-sim run \
+  --config docs/examples/basic_config.json \
+  --until 50 \
+  --trace output/traces/basic.parquet \
+  --trace-format parquet
+```
+
+Replay a trace:
 
 ```bash
 uv run qbp-sim replay --trace output/traces/basic.vortex --until 50
 ```
 
-Write sampled snapshots and analyze them:
+Write snapshots and plot service ratio:
 
 ```bash
 uv run qbp-sim run \
   --config docs/examples/basic_config.json \
   --until 50 \
   --snapshots output/snapshots/basic.jsonl.zst
+
 uv run qbp-sim analyze \
   --snapshots output/snapshots/basic.jsonl.zst \
   --plot-metric service_ratio \
@@ -69,15 +82,17 @@ uv run qbp-sim analyze \
 
 = Simulation Configs
 
-A simulation config describes an undirected network with symmetric matrices. The row and column index is the node id.
+A simulation config describes an undirected network. Matrices are symmetric. Node ids are matrix row and column indexes.
 
-- `generation_rates[x][y]`: Bell-pair generation hazard on edge `(x,y)`. Positive entries imply physical generation edges.
-- `consumption_rates[x][y]`: demand arrival rate for service on pair `(x,y)`.
-- `swap_rates[i]`: per-node swap opportunity rate.
-- `capacity_headroom`: multiplier applied to controllable generation, swap, and service opportunity rates. Demand arrivals are not scaled.
-- `virtual_swap_policy`: swap-selection policy. The default `bp` is full-information backpressure.
+- `generation_rates[x][y]`: Bell-pair generation rate on edge `(x, y)`.
+- `consumption_rates[x][y]`: demand arrival rate for pair `(x, y)`.
+- `swap_rates[i]`: swap opportunity rate at node `i`.
+- `capacity_headroom`: multiplier on generation, swap, and service opportunity rates. Demand arrivals are unchanged. The default is `1.01`.
+- `virtual_swap_policy`: swap-selection policy.
+- `instant_service_fulfillment`: deterministic physical service realization after inventory-producing events.
+- `instant_swap_fulfillment`: deterministic physical swap realization through the local frontier.
 
-Minimal example:
+Minimal config:
 
 ```json
 {
@@ -102,13 +117,50 @@ Minimal example:
 Supported policy modes:
 
 - `bp`: full-information backpressure. Each node scans all swap candidates and chooses the largest positive virtual pressure.
-- `limited_info_bp`: limited-information backpressure. Each node samples `k` candidates, remembers the best `memory` candidates, and exposes only the best positive remembered candidate.
-- `max_min`: path-oblivious inventory balancing baseline. It uses physical inventory `Q`, not backpressure scarcity `alpha`.
-- `limited_info_max_min`: limited-information max-min. Each node applies the same `k`-query, `memory`-candidate restriction to max-min swap selection.
+- `limited_info_bp`: backpressure with `k` queried candidates and `memory` remembered candidates per node.
+- `max_min`: path-oblivious inventory balancing. It uses physical inventory `Q` rather than scarcity `alpha`.
+- `limited_info_max_min`: max-min with `k` queried candidates and `memory` remembered candidates per node.
+
+Limited-information policy config:
+
+```json
+{
+  "virtual_swap_policy": {
+    "mode": "limited_info_bp",
+    "k": 4,
+    "memory": 8
+  }
+}
+```
+
+= State And Events
+
+The simulator stores dense symmetric state matrices:
+
+- `Q[x, y]`: Bell-pair inventory.
+- `D[x, y]`: virtual demand backlog, also called `gamma`.
+- `alpha[x, y]`: backpressure scarcity signal.
+- $H^R[x,y]$: pending physical service requests.
+- $H^mu[i,y,z]$: pending physical swap requests.
+
+The Gillespie engine samples these stochastic event families:
+
+- demand arrivals
+- Bell-pair generation
+- virtual service requests
+- direct service admission for max-min mode
+- virtual swap requests
+- max-min physical swaps
+- physical service realizations
+- physical swap realizations
+
+Backpressure virtual events update `D`, `alpha`, $H^R$, and $H^mu$. Physical realization events consume inventory from `Q`.
+
+The deterministic frontier runs after sampled events when instant fulfillment is enabled. It realizes pending service before pending swaps on the affected edge. Deterministic realization events use the same event trace schema as sampled events and have zero elapsed time.
 
 = Running Simulations
 
-`qbp-sim run` is the main command for user-provided configs:
+Run a user-provided config:
 
 ```bash
 uv run qbp-sim run --config CONFIG.json --until 100 --seed 1
@@ -116,47 +168,41 @@ uv run qbp-sim run --config CONFIG.json --until 100 --seed 1
 
 Common options:
 
-- `--max-events 0`: no event cap. Positive values stop early after that many sampled events.
+- `--max-events 0`: no event cap. Positive values stop after that many sampled events.
 - `--sample-every N`: record aggregate snapshots every `N` applied events.
-- `--trace OUTFILE`: write every event. Use `.vortex`, `.parquet`, or `.jsonl.zst`.
-- `--trace-format parquet`: choose the trace writer explicitly instead of inferring from the output filename.
-- `--trace-float-precision float32`: precision for columnar trace floats.
-- `--trace-time-mode none`: omit time/rate fields for smaller event-order traces.
+- `--trace OUTFILE`: write every event.
+- `--trace-format vortex|parquet|jsonl_zst`: select the trace writer.
+- `--trace-float-precision float16|float32|float64`: precision for columnar trace floats.
+- `--trace-time-mode full|none`: include or omit timing and rate fields.
 - `--snapshots OUTFILE`: write sampled aggregate snapshots.
-- `--instant-service-fulfillment`: deterministic immediate service realization when new inventory satisfies pending service on the same edge.
-- `--instant-swap-fulfillment`: deterministic immediate realization for feasible pending swaps.
+- `--virtual-swap-policy MODE`: override the config policy.
+- `--swap-k K`: limited-information query count.
+- `--swap-memory M`: limited-information memory size.
+- `--instant-service-fulfillment`: enable deterministic immediate service realization.
+- `--instant-swap-fulfillment`: enable deterministic immediate swap realization.
 
-Traces are for replay and detailed later analysis. Snapshots are sampled aggregates for plotting and quick summaries.
+= Traces, Snapshots, And Metadata
 
-= Experiment Matrices
+Traces are per-event logs for replay and detailed analysis. Supported formats:
 
-Use an experiment matrix when you want a small sweep without writing Python:
+- `.vortex`
+- `.parquet`
+- `.jsonl.zst`
 
-```bash
-uv run qbp-sim matrix \
-  --config docs/examples/matrix_config.json \
-  --output-dir output/matrix_demo
-```
+Columnar traces store `time`, `total_rate`, and `event_rate` as `float32` by default. `--trace-float-precision float64` stores full precision. `--trace-time-mode none` omits time and rate fields. Timeless traces preserve event order and state transitions.
 
-Inspect the cases without running them:
+Snapshots are sampled aggregate summaries. They are useful for quick plots and summaries.
 
-```bash
-uv run qbp-sim matrix \
-  --config docs/examples/matrix_config.json \
-  --output-dir output/matrix_demo \
-  --dry-run
-```
+Experiment runs write:
 
-Each completed case writes:
+- `lp_solution.json`
+- `simulation_config.json`
+- `events.<format>`
+- `run_metadata.json`
 
-- `lp_solution.json`: LP benchmark output used to derive the config.
-- `simulation_config.json`: exact simulator input after headroom and policy settings.
-- `events.<format>`: event trace, for example `events.vortex` or `events.parquet`.
-- `run_metadata.json`: seed, horizon, paths, settings, and result counters.
+Matrix runs also write `summary.csv`.
 
-The matrix output directory also contains `summary.csv` with one row per case.
-
-= Interpreting Outputs
+= Metrics
 
 The primary service metric is:
 
@@ -164,19 +210,18 @@ The primary service metric is:
 service_ratio = services_completed / demand_arrivals
 ```
 
-Important counters:
+Common counters:
 
 - `total_backlog`: aggregate pending virtual or physical work.
-- `total_inventory`: Bell pairs currently stored in `Q`.
+- `total_inventory`: Bell pairs stored in `Q`.
 - `total_scarcity`: aggregate backpressure scarcity `alpha`.
-- `pair_generations`: direct generated Bell pairs.
-- `swaps_completed`: physical swaps completed.
+- `pair_generations`: generated Bell pairs.
+- `virtual_service_requests`: virtual service requests.
+- `virtual_swap_requests`: virtual swap requests.
+- `services_completed`: fulfilled demand requests.
+- `swaps_completed`: realized physical swaps.
 
-If a trace is written with `--trace-time-mode none`, replay preserves event order and state transitions but cannot reconstruct the real simulation clock unless you provide an external final time.
-
-= Output Examples
-
-A typical run without file outputs prints a summary like:
+A CLI run prints:
 
 ```text
 QBP Gillespie simulation
@@ -193,7 +238,7 @@ services_completed=73
 swaps_completed=22
 ```
 
-A `run_metadata.json` file records reproducibility data and final counters:
+A `run_metadata.json` file stores reproducibility data and final counters:
 
 ```json
 {
@@ -216,21 +261,57 @@ A `run_metadata.json` file records reproducibility data and final counters:
 }
 ```
 
-A matrix `summary.csv` contains one row per resolved case. Important columns include:
+= Experiment Matrices
 
-```text
-slug,topology,n_nodes,capacity_headroom,policy_label,seed,final_time,
-events_processed,demand_arrivals,services_completed,service_ratio,
-trace_path,metadata_path,simulation_config_path
+An experiment matrix expands Cartesian products of topology, graph size, demand sparsity, headroom, policy, rate scales, seeds, trace settings, and instant-fulfillment modes.
+
+```json
+{
+  "topologies": ["cycle"],
+  "graph_sizes": [3],
+  "consumption_edge_fractions": [null],
+  "headrooms": [1.01],
+  "policies": [
+    {"mode": "bp", "label": "bp"},
+    {"mode": "limited_info_bp", "k": 1, "memory": 1, "label": "limited BP k=1, m=1"}
+  ],
+  "edge_weights": [10.0],
+  "gen_scales": [10.0],
+  "cons_scales": [0.2],
+  "swap_rates": [20.0],
+  "seed_offsets": [0],
+  "until_time": 2.0,
+  "sample_every": 10,
+  "trace_format": "vortex",
+  "trace_float_precision": "float32",
+  "trace_time_mode": "none"
+}
+```
+
+Run a matrix:
+
+```bash
+uv run qbp-sim matrix \
+  --config docs/examples/matrix_config.json \
+  --output-dir output/matrix_demo
+```
+
+Inspect expanded cases:
+
+```bash
+uv run qbp-sim matrix \
+  --config docs/examples/matrix_config.json \
+  --output-dir output/matrix_demo \
+  --dry-run
 ```
 
 = Plots
 
-All built-in plots are Altair/Vega-Lite charts and can be written as `.png`, `.svg`, `.html`, or `.json` depending on the output filename.
+Built-in plots use Altair/Vega-Lite. Output format follows the file extension: `.png`, `.svg`, `.html`, or `.json`.
 
 == Snapshot Metric Plot
 
-Use this when you have a snapshot file and want one metric over time:
+Plot one snapshot metric over time:
 
 ```bash
 uv run qbp-sim run \
@@ -245,23 +326,11 @@ uv run qbp-sim analyze \
   --plot-out output/plots/basic_service_ratio.png
 ```
 
-Available snapshot metrics are `event_index`, `time`, `total_backlog`, `total_inventory`, `total_scarcity`, `demand_arrivals`, `pair_generations`, `services_completed`, `swaps_completed`, and `service_ratio`.
-
-Python equivalent:
-
-```python
-from qbp_sim.snapshots import SnapshotReader
-from qbp_sim.analysis import plot_snapshot_metric
-
-with SnapshotReader("output/snapshots/basic.jsonl.zst") as reader:
-    snapshots = list(reader)
-
-plot_snapshot_metric(snapshots, "total_backlog", "output/plots/backlog.svg")
-```
+Available snapshot metrics include `event_index`, `time`, `total_backlog`, `total_inventory`, `total_scarcity`, `demand_arrivals`, `pair_generations`, `services_completed`, `swaps_completed`, and `service_ratio`.
 
 == Snapshot Metric Series Plot
 
-Use this from Python to compare the same snapshot metric across several runs:
+Compare one snapshot metric across several runs from Python:
 
 ```python
 from qbp_sim.analysis import plot_snapshot_metric_series
@@ -284,7 +353,7 @@ plot_snapshot_metric_series(
 
 == Cycle Service-Gap Plot
 
-This command solves LP-derived cycle instances, runs backpressure, and plots `1 - service_ratio` on log-log axes for each cycle size:
+Run LP-derived cycle instances and plot `1 - service_ratio` on log-log axes:
 
 ```bash
 uv run qbp-sim cycle-service-ratio \
@@ -293,11 +362,9 @@ uv run qbp-sim cycle-service-ratio \
   --plot-out output/plots/cycle_service_ratio_gap.png
 ```
 
-The plot answers: how quickly does service deficit decay as the topology size changes?
-
 == Headroom Service-Gap Plot
 
-This command compares capacity-headroom multipliers on one LP-derived cycle instance and plots `1 - service_ratio` on log-log axes:
+Compare capacity headroom values on one LP-derived cycle instance:
 
 ```bash
 uv run qbp-sim headroom-service-ratio \
@@ -307,11 +374,9 @@ uv run qbp-sim headroom-service-ratio \
   --plot-out output/plots/headroom_service_ratio_gap.svg
 ```
 
-The plot answers: how much capacity slack is needed before service deficit decays cleanly?
-
 == Limited-Information Service-Ratio Plot
 
-This command compares full-information backpressure against one or more `limited_info_bp` policies and plots `service_ratio` over log-scaled time:
+Compare full-information backpressure with `limited_info_bp` policies:
 
 ```bash
 uv run qbp-sim limited-info-service-ratio \
@@ -322,11 +387,9 @@ uv run qbp-sim limited-info-service-ratio \
   --plot-out output/plots/limited_info_service_ratio.png
 ```
 
-The plot answers: how close is limited-information routing to full-information routing?
-
 == LP Benchmark Ratio Plot
 
-The LP module has an advanced plot helper that compares path-based routing to the LP benchmark on random torus-grid instances. It plots path/LP ratios for total swaps and maximum per-edge generation:
+Compare path-based routing with the LP benchmark on random torus-grid instances:
 
 ```python
 from qbp_sim.lp.linear import plot_swaps_and_maxgen_vs_nodes
@@ -339,36 +402,9 @@ plot_swaps_and_maxgen_vs_nodes(
 )
 ```
 
-This is an LP benchmark plot, not a stochastic simulator plot.
-
 = Public Python API
 
-The package root exposes the consumer API. Treat it as the stable Python interface for normal scripts.
-
-== Public Types
-
-- `SimulationInputConfig`: Pydantic model for JSON-facing simulator configs.
-- `VirtualSwapPolicyConfig`: Pydantic model for policy settings inside a simulation config.
-- `ExperimentMatrixConfig`: Pydantic model for Cartesian-product experiment sweeps.
-- `ExperimentPolicyConfig`: one policy entry in an experiment matrix.
-- `ExperimentMatrixCase`: one resolved matrix case.
-- `RunOptions`: dataclass of runtime options for `run_simulation`.
-- `RunOutput`: dataclass containing the `result`, optional trace path, optional snapshot path, and convenience `service_ratio`.
-- `VirtualSwapPolicyMode`: enum values `bp`, `limited_info_bp`, `max_min`, `limited_info_max_min`.
-- `TopologyName`: enum values `cycle`, `chain`, `grid`.
-- `TraceFloatPrecision`: enum values `float16`, `float32`, `float64`.
-- `TraceFormat`: enum values `vortex`, `parquet`, `jsonl_zst`.
-- `TraceTimeMode`: enum values `full`, `none`.
-
-== Public Functions
-
-- `load_simulation_config(path)`: load and validate a simulation JSON file.
-- `load_experiment_matrix_config(path)`: load and validate a matrix JSON file.
-- `build_four_node_example_config()`: return the documented four-node example as `SimulationInputConfig`.
-- `run_simulation(config_or_path, options=None)`: run a simulation from a config object or JSON path.
-- `replay_trace(trace_path, config=None, final_time=None, sample_every=500, snapshots_path=None)`: replay an event trace.
-
-== Basic Programmatic Run
+Import the stable user API from `qbp_sim`:
 
 ```python
 from qbp_sim import RunOptions, TraceFormat, build_four_node_example_config, run_simulation
@@ -386,16 +422,33 @@ output = run_simulation(
 print(output.service_ratio)
 ```
 
-Example output:
+Public root types:
 
-```text
-0.9736842105263158
-```
+- `SimulationInputConfig`
+- `VirtualSwapPolicyConfig`
+- `ExperimentMatrixConfig`
+- `ExperimentPolicyConfig`
+- `ExperimentMatrixCase`
+- `RunOptions`
+- `RunOutput`
+- `VirtualSwapPolicyMode`
+- `TopologyName`
+- `TraceFloatPrecision`
+- `TraceFormat`
+- `TraceTimeMode`
 
-== Load JSON and Replay Traces
+Public root functions:
+
+- `load_simulation_config(path)`
+- `load_experiment_matrix_config(path)`
+- `build_four_node_example_config()`
+- `run_simulation(config_or_path, options=None)`
+- `replay_trace(trace_path, config=None, final_time=None, sample_every=500, snapshots_path=None)`
+
+== Replay From Python
 
 ```python
-from qbp_sim import load_simulation_config, replay_trace, run_simulation
+from qbp_sim import RunOptions, load_simulation_config, replay_trace, run_simulation
 
 config = load_simulation_config("docs/examples/basic_config.json")
 run = run_simulation(
@@ -413,15 +466,10 @@ replayed = replay_trace(
 assert replayed.result.services_completed == run.result.services_completed
 ```
 
-== Drive a Small Parameter Sweep
+== Parameter Sweep From Python
 
 ```python
-from qbp_sim import (
-    RunOptions,
-    VirtualSwapPolicyMode,
-    build_four_node_example_config,
-    run_simulation,
-)
+from qbp_sim import RunOptions, VirtualSwapPolicyMode, build_four_node_example_config, run_simulation
 from qbp_sim.config import VirtualSwapPolicyConfig
 
 base = build_four_node_example_config()
@@ -437,7 +485,7 @@ for policy in [VirtualSwapPolicyMode.BP, VirtualSwapPolicyMode.MAX_MIN]:
     print(policy, output.service_ratio)
 ```
 
-== Expand a Matrix Without Running It
+== Matrix Expansion From Python
 
 ```python
 from qbp_sim import load_experiment_matrix_config
@@ -449,14 +497,12 @@ for case in matrix.cases():
 
 == Trace Analysis With Polars
 
-Use Polars as the canonical table interface for event traces. Vortex files can be opened as a Polars `LazyFrame`, while Parquet files can use Polars' native scanner:
-
 ```python
 import polars as pl
 import vortex as vx
 
 lf = vx.open("output/traces/python_example.vortex").to_polars()
-# Or:
+# For Parquet:
 lf = pl.scan_parquet("output/traces/python_example.parquet")
 
 service_ratio = (
@@ -475,49 +521,79 @@ service_ratio = (
 )
 ```
 
-The `examples/` directory has runnable scripts that combine hard-coded typed configs, Vortex traces, Polars metric derivation, and 300 dpi Altair PNG plots.
-Low-level modules such as `qbp_sim.core`, `qbp_sim.io`, and `qbp_sim.lp` are available for library development and advanced replay analysis. New users should start with the facade, CLI, and Polars trace tables.
-
 = LP Benchmark
 
-The LP module solves a global average-rate optimization problem. It can produce simulator configs and comparison data, but it is not the same stochastic event process as backpressure. Use LP outputs as aggregate-rate benchmarks or as a convenient way to generate feasible network instances.
+The LP module solves global average-rate optimization problems and can emit simulator configs.
 
-The experiment matrix command uses the LP builder internally for `cycle`, `chain`, and `grid` topologies, then runs the Gillespie simulator with the derived rates.
+```python
+from qbp_sim.lp import linear
 
-= Performance and Reproducibility
+num_nodes = 6
+generation_capacity = linear.create_cycle_adjacency_matrix(num_nodes, edge_weight=10.0)
+consumption_demand = linear.create_sparse_symmetric_adjacency_matrix(
+    num_nodes,
+    edge_fraction=0.3,
+    max_edge_weight=7.0,
+    seed=0,
+    min_positive_edges=1,
+)
 
-- Use `pueue` for long simulations, benchmark jobs, and analysis runs that should survive shell sessions.
-- Prefer `.vortex` traces for compact columnar event logs; use `trace_format: "parquet"` when consumers prefer the standard Parquet ecosystem.
-- Use `float32` trace precision by default; use `float64` when exact time/rate precision matters.
-- Use `trace_time_mode: "none"` for smaller traces when event order is enough.
-- Record fixed seeds and keep `run_metadata.json` with every run.
+spec = linear.LinearSpec(num_nodes)
+spec.add_generate_constraints(generation_capacity)
+spec.add_consume_constraints(consumption_demand)
+spec.add_swap_capacity_constraints([20.0] * num_nodes)
+lp_result = spec.solve(objective="min_sum_generate")
+config = linear.build_lp_solution_simulation_input_config(spec=spec, lp_result=lp_result)
+```
+
+= Package Layout
+
+- `src/qbp_sim/facade.py`: public Python API.
+- `src/qbp_sim/core/`: simulator state, kernels, event producer, event applier, frontier realization, run loop, and replay.
+- `src/qbp_sim/io/`: event records, event traces, and snapshots.
+- `src/qbp_sim/config/`: Pydantic config models and runtime conversion.
+- `src/qbp_sim/analysis/`: snapshot summaries and Altair chart helpers.
+- `src/qbp_sim/experiments/`: LP-derived experiment setup, metadata, matrix execution, and plots.
+- `src/qbp_sim/cli/`: command-line parser and command handlers.
+- `src/qbp_sim/lp/`: LP benchmark model.
+- `examples/`: runnable Python examples.
+- `docs/`: Typst manual and JSON examples.
+- `tests/`: unit, replay, trace, experiment, LP, import-contract, and gated stochastic tests.
+
+= Performance And Reproducibility
+
+- Use `pueue` for long simulations, benchmark jobs, and analysis runs.
+- Use `.vortex` for compact columnar event logs.
+- Use `trace_format: "parquet"` for standard Parquet tooling.
+- Use fixed seeds for comparable runs.
+- Keep `run_metadata.json` with every run.
 - Keep generated runs under ignored `output/`.
 
-= Building Distributable Artifacts
+= Building Artifacts
 
-Build a source distribution and wheel locally:
+Build a source distribution and wheel:
 
 ```bash
 uv build
 ```
 
-The build writes files like:
+The build writes:
 
 ```text
 dist/qbp_sim-0.2.0.tar.gz
 dist/qbp_sim-0.2.0-py3-none-any.whl
 ```
 
-The repository also includes a GitHub Actions workflow that runs tests, compiles this Typst manual, builds the wheel and source distribution, and uploads them as downloadable artifacts. Use the `workflow_dispatch` trigger in GitHub when you want an external consumer to download a fresh package artifact without publishing to PyPI.
+The GitHub Actions `build` workflow runs tests, compiles this manual, builds the wheel and source distribution, and uploads those files as workflow artifacts.
 
 = Glossary
 
 - `Q`: physical Bell-pair inventory matrix.
 - `alpha`: backpressure scarcity signal.
 - virtual demand backlog: demand accumulated before admission to physical service.
-- service backlog, `$H^R$`: pending service requests waiting for physical inventory.
-- swap deficit, `$H^mu$`: pending virtual swaps waiting for physical realization.
-- headroom: capacity multiplier applied to generation, swap, and service opportunities, but not to demand arrivals.
-- trace: per-event log for replay and detailed analysis.
+- service backlog, $H^R$: pending service requests waiting for physical inventory.
+- swap deficit, $H^mu$: pending virtual swaps waiting for physical realization.
+- headroom: multiplier applied to generation, swap, and service opportunities.
+- trace: per-event log for replay and analysis.
 - snapshot: sampled aggregate state summary.
-- service ratio: fulfilled requests divided by requested demand arrivals.
+- service ratio: fulfilled requests divided by demand arrivals.
