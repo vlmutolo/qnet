@@ -110,6 +110,7 @@ def _write_run_metadata(
     sample_every: int,
     burn_in_time: float,
     trace_float_precision: str,
+    trace_format: str,
     trace_time_mode: str,
     simulation_config_path: Path,
     trace_path: Path,
@@ -128,6 +129,7 @@ def _write_run_metadata(
         "sample_every": sample_every,
         "burn_in_time": burn_in_time,
         "trace_float_precision": trace_float_precision,
+        "trace_format": trace_format,
         "trace_time_mode": trace_time_mode,
         "hit_time_horizon": result.final_time >= until_time,
         "hit_event_cap": (
@@ -136,7 +138,6 @@ def _write_run_metadata(
         "simulation_config_path": str(simulation_config_path),
         "trace_path": str(trace_path),
         "lp_json_path": str(lp_json_path),
-        "trace_format": trace_path.suffix.lstrip("."),
         "result": _result_payload(result),
         "initial_state": initial_state,
         "extra": extra or {},

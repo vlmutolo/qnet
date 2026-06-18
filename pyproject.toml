@@ -1,6 +1,6 @@
 [project]
 name = "qbp-sim"
-version = "0.1.0"
+version = "0.2.0"
 description = "Continuous-time Gillespie simulation for quantum backpressure networks"
 readme = "README.md"
 authors = [

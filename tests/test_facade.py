@@ -5,6 +5,7 @@ import json
 from qbp_sim import (
     RunOptions,
     TraceFloatPrecision,
+    TraceFormat,
     TraceTimeMode,
     VirtualSwapPolicyMode,
     build_four_node_example_config,
@@ -40,6 +41,7 @@ def test_run_simulation_from_json_path_and_replay_trace(tmp_path) -> None:
             sample_every=25,
             seed=2,
             trace_path=trace_path,
+            trace_format=TraceFormat.VORTEX,
             trace_float_precision=TraceFloatPrecision.FLOAT32,
             trace_time_mode=TraceTimeMode.FULL,
             progress=False,
@@ -56,6 +58,33 @@ def test_run_simulation_from_json_path_and_replay_trace(tmp_path) -> None:
     assert replay_output.result.events_processed == run_output.result.events_processed
     assert replay_output.result.services_completed == run_output.result.services_completed
     assert replay_output.result.demand_arrivals == run_output.result.demand_arrivals
+
+
+def test_run_simulation_can_write_explicit_parquet_trace(tmp_path) -> None:
+    trace_path = tmp_path / "events.parquet"
+    run_output = run_simulation(
+        build_four_node_example_config(),
+        RunOptions(
+            until_time=1.0,
+            max_events=100,
+            sample_every=0,
+            seed=3,
+            trace_path=trace_path,
+            trace_format=TraceFormat.PARQUET,
+            progress=False,
+        ),
+    )
+
+    replay_output = replay_trace(
+        trace_path,
+        config=build_four_node_example_config(),
+        final_time=run_output.result.final_time,
+        sample_every=0,
+    )
+
+    assert run_output.trace_path == trace_path
+    assert replay_output.result.events_processed == run_output.result.events_processed
+    assert replay_output.result.services_completed == run_output.result.services_completed
 
 
 def test_policy_aliases_validate_through_json_and_cli(tmp_path) -> None:

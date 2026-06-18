@@ -8,6 +8,7 @@ from qbp_sim.experiments import (
 from qbp_sim.facade import (
     RunOptions,
     RunOutput,
+    TraceFormat,
     TopologyName,
     TraceFloatPrecision,
     TraceTimeMode,
@@ -24,6 +25,7 @@ __all__ = [
     "RunOptions",
     "RunOutput",
     "SimulationInputConfig",
+    "TraceFormat",
     "TopologyName",
     "TraceFloatPrecision",
     "TraceTimeMode",

@@ -24,6 +24,7 @@ def test_experiment_matrix_defaults_to_full_and_limited_policy_cases() -> None:
     assert cases[1].virtual_swap_policy.mode == "limited_info_bp"
     assert cases[1].virtual_swap_policy.k == 1
     assert cases[1].virtual_swap_policy.memory == 1
+    assert {case.trace_format for case in cases} == {"vortex"}
     assert {case.trace_time_mode for case in cases} == {"full"}
 
 
@@ -89,6 +90,7 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
                 "until_time": 100000.0,
                 "max_events": None,
                 "sample_every": 1000,
+                "trace_format": "parquet",
                 "trace_float_precision": "float32",
                 "trace_time_mode": "none",
             }
@@ -105,6 +107,7 @@ def test_experiment_matrix_loads_json_config(tmp_path) -> None:
     assert all(case.topology == "chain" for case in cases)
     assert all(case.seed == 17 for case in cases)
     assert all(case.max_events is None for case in cases)
+    assert all(case.trace_format == "parquet" for case in cases)
     assert all(case.trace_time_mode == "none" for case in cases)
 
 

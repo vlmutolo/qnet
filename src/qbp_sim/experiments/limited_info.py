@@ -15,7 +15,7 @@ from qbp_sim.experiments.common import (
     _policy_slug,
     _write_run_metadata,
 )
-from qbp_sim.io.trace import open_event_trace_writer
+from qbp_sim.io.trace import open_event_trace_writer, trace_file_extension
 
 def run_limited_info_service_ratio_experiment(
     *,
@@ -34,6 +34,7 @@ def run_limited_info_service_ratio_experiment(
     objective: str = "min_sum_generate",
     swap_rate: float = 100.0,
     capacity_headroom: float = 1.01,
+    trace_format: str = "vortex",
     trace_float_precision: str = "float32",
     trace_time_mode: str = "full",
     instant_service_fulfillment: bool = False,
@@ -101,7 +102,7 @@ def run_limited_info_service_ratio_experiment(
         case_dir = base_dir / _policy_slug(policy_label)
         case_dir.mkdir(parents=True, exist_ok=True)
         simulation_config_path = case_dir / "simulation_config.json"
-        trace_path = case_dir / "events.vortex"
+        trace_path = case_dir / f"events{trace_file_extension(trace_format)}"
         metadata_path = case_dir / "run_metadata.json"
         simulation_config_path.write_text(simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
@@ -109,6 +110,7 @@ def run_limited_info_service_ratio_experiment(
         snapshot_writer = _MemorySnapshotWriter()
         with open_event_trace_writer(
             trace_path,
+            trace_format=trace_format,
             float_precision=trace_float_precision,
             time_mode=trace_time_mode,
         ) as trace_writer:
@@ -130,6 +132,7 @@ def run_limited_info_service_ratio_experiment(
             sample_every=sample_every,
             burn_in_time=0.0,
             trace_float_precision=trace_float_precision,
+            trace_format=trace_format,
             trace_time_mode=trace_time_mode,
             simulation_config_path=simulation_config_path,
             trace_path=trace_path,

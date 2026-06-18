@@ -36,8 +36,8 @@ typst compile docs/manual.typ docs/qbp-sim.pdf
 
 The `examples/` directory contains runnable consumer scripts that hard-code typed
 `SimulationInputConfig` objects, write Vortex event traces, and use Polars as the canonical trace
-analysis layer through `vx.open(path).to_polars()`. Each example writes traces and Altair HTML
-plots under ignored `output/examples/`.
+analysis layer through `vx.open(path).to_polars()`. Each example writes traces and 300 dpi Altair
+PNG plots under ignored `output/examples/`.
 
 ```bash
 uv run examples/01_basic_run_service_ratio.py
@@ -148,7 +148,7 @@ The simulator is split into two systems:
 
 That separation is intentional. It keeps event generation and state mutation decoupled, and it makes replay straightforward because a saved event log can be fed directly into the applier without resampling randomness.
 
-Experiment commands write durable per-run artifacts as `events.vortex`, `simulation_config.json`,
+Experiment commands write durable per-run artifacts as `events.<format>`, `simulation_config.json`,
 and `run_metadata.json`. Plots produced by those commands use sampled snapshots in memory, but do
 not save snapshot checkpoint files. Snapshots are still available as an explicit lower-level CLI
 artifact type:
@@ -177,19 +177,20 @@ concrete cases and can be inspected or run through the generic matrix command:
   "seed_offsets": [0, 100],
   "until_time": 100000.0,
   "sample_every": 1000,
+  "trace_format": "vortex",
   "trace_time_mode": "none"
 }
 ```
 
 The core axes are topology, graph size, consumption-demand sparsity, capacity headroom, swap
-policy, generation/consumption/swap scale factors, stochastic seed replicate, trace precision,
-trace time mode, and instant physical-fulfillment modes.
+policy, generation/consumption/swap scale factors, stochastic seed replicate, trace format,
+trace precision, trace time mode, and instant physical-fulfillment modes.
 
 ```bash
 uv run qbp-sim matrix --config docs/examples/matrix_config.json --output-dir output/matrix_demo
 ```
 
-Each matrix case writes `lp_solution.json`, `simulation_config.json`, `events.vortex`, and
+Each matrix case writes `lp_solution.json`, `simulation_config.json`, `events.<format>`, and
 `run_metadata.json`; the matrix output directory also gets `summary.csv`.
 
 ## Layout
@@ -265,6 +266,12 @@ Write a compact Vortex event trace:
 
 ```bash
 uv run qbp-sim example --until 100 --trace output/traces/run-001.vortex
+```
+
+Write a Parquet event trace:
+
+```bash
+uv run qbp-sim example --until 100 --trace output/traces/run-001.parquet --trace-format parquet
 ```
 
 Columnar event traces (`.vortex` and `.parquet`) store `time`, `total_rate`, and

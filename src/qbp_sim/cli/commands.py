@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> None:
         elif args.trace is not None and args.snapshots is None:
             with open_event_trace_writer(
                 args.trace,
+                trace_format=args.trace_format,
                 float_precision=args.trace_float_precision,
                 time_mode=args.trace_time_mode,
             ) as trace_writer:
@@ -63,6 +64,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             with open_event_trace_writer(
                 args.trace,
+                trace_format=args.trace_format,
                 float_precision=args.trace_float_precision,
                 time_mode=args.trace_time_mode,
             ) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
@@ -95,6 +97,7 @@ def main(argv: list[str] | None = None) -> None:
         elif args.trace is not None and args.snapshots is None:
             with open_event_trace_writer(
                 args.trace,
+                trace_format=args.trace_format,
                 float_precision=args.trace_float_precision,
                 time_mode=args.trace_time_mode,
             ) as trace_writer:
@@ -115,6 +118,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             with open_event_trace_writer(
                 args.trace,
+                trace_format=args.trace_format,
                 float_precision=args.trace_float_precision,
                 time_mode=args.trace_time_mode,
             ) as trace_writer, SnapshotWriter(args.snapshots) as snapshot_writer:
@@ -187,6 +191,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_scale=args.cons_scale,
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
+            trace_format=args.trace_format,
             trace_float_precision=args.trace_float_precision,
             trace_time_mode=args.trace_time_mode,
             instant_service_fulfillment=args.instant_service_fulfillment,
@@ -216,6 +221,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_scale=args.cons_scale,
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
+            trace_format=args.trace_format,
             trace_float_precision=args.trace_float_precision,
             trace_time_mode=args.trace_time_mode,
             instant_service_fulfillment=args.instant_service_fulfillment,
@@ -246,6 +252,7 @@ def main(argv: list[str] | None = None) -> None:
             cons_edge_fraction=args.cons_edge_fraction,
             swap_rate=args.swap_rate,
             capacity_headroom=args.headroom,
+            trace_format=args.trace_format,
             trace_float_precision=args.trace_float_precision,
             trace_time_mode=args.trace_time_mode,
             instant_service_fulfillment=args.instant_service_fulfillment,

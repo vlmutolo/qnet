@@ -50,8 +50,11 @@ def test_cli_instant_service_fulfillment_flag_enables_runtime_config() -> None:
 
 def test_cli_trace_time_mode_flag_is_available_for_trace_writers() -> None:
     parser = _build_parser()
-    args = parser.parse_args(["example", "--trace", "events.vortex", "--trace-time-mode", "none"])
+    args = parser.parse_args(
+        ["example", "--trace", "events.vortex", "--trace-format", "parquet", "--trace-time-mode", "none"]
+    )
 
+    assert args.trace_format == "parquet"
     assert args.trace_time_mode == "none"
 
 
@@ -111,6 +114,7 @@ def test_cli_matrix_tiny_run_writes_artifacts(tmp_path) -> None:
                 "until_time": 1.0,
                 "max_events": 200,
                 "sample_every": 10,
+                "trace_format": "parquet",
                 "trace_time_mode": "none",
             }
         ),
@@ -124,5 +128,5 @@ def test_cli_matrix_tiny_run_writes_artifacts(tmp_path) -> None:
     assert summary_path.exists()
     assert len(case_dirs) == 1
     assert (case_dirs[0] / "simulation_config.json").exists()
-    assert (case_dirs[0] / "events.vortex").exists()
+    assert (case_dirs[0] / "events.parquet").exists()
     assert (case_dirs[0] / "run_metadata.json").exists()

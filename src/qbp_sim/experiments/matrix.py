@@ -17,6 +17,7 @@ from qbp_sim.core.types import (
 
 TopologyName = Literal["cycle", "chain", "grid"]
 TraceFloatPrecision = Literal["float16", "float32", "float64"]
+TraceFormat = Literal["vortex", "parquet", "jsonl_zst"]
 TraceTimeMode = Literal["full", "none"]
 
 
@@ -125,6 +126,7 @@ class ExperimentMatrixCase(BaseModel):
     until_time: float
     max_events: int | None
     sample_every: int
+    trace_format: TraceFormat
     trace_float_precision: TraceFloatPrecision
     trace_time_mode: TraceTimeMode
     instant_service_fulfillment: bool
@@ -229,6 +231,10 @@ class ExperimentMatrixConfig(BaseModel):
     trace_float_precision: TraceFloatPrecision = Field(
         default="float32",
         description="Floating-point precision for columnar event traces.",
+    )
+    trace_format: TraceFormat = Field(
+        default="vortex",
+        description="Event trace storage format: vortex, parquet, or jsonl_zst.",
     )
     trace_time_mode: TraceTimeMode = Field(
         default="full",
@@ -346,6 +352,7 @@ class ExperimentMatrixConfig(BaseModel):
                     until_time=self.until_time,
                     max_events=self.max_events,
                     sample_every=self.sample_every,
+                    trace_format=self.trace_format,
                     trace_float_precision=self.trace_float_precision,
                     trace_time_mode=self.trace_time_mode,
                     instant_service_fulfillment=instant_service,

@@ -33,6 +33,12 @@ class TraceFloatPrecision(StrEnum):
     FLOAT64 = "float64"
 
 
+class TraceFormat(StrEnum):
+    VORTEX = "vortex"
+    PARQUET = "parquet"
+    JSONL_ZST = "jsonl_zst"
+
+
 class TraceTimeMode(StrEnum):
     FULL = "full"
     NONE = "none"
@@ -46,6 +52,7 @@ class RunOptions:
     seed: int = 0
     trace_path: str | Path | None = None
     snapshots_path: str | Path | None = None
+    trace_format: TraceFormat | str | None = None
     trace_float_precision: TraceFloatPrecision | str = TraceFloatPrecision.FLOAT32
     trace_time_mode: TraceTimeMode | str = TraceTimeMode.FULL
     progress: bool | None = None
@@ -114,6 +121,7 @@ def run_simulation(
     elif trace_path is not None and snapshots_path is None:
         with open_event_trace_writer(
             trace_path,
+            trace_format=None if opts.trace_format is None else str(opts.trace_format),
             float_precision=str(opts.trace_float_precision),
             time_mode=str(opts.trace_time_mode),
         ) as trace_writer:
@@ -138,6 +146,7 @@ def run_simulation(
         assert snapshots_path is not None
         with open_event_trace_writer(
             trace_path,
+            trace_format=None if opts.trace_format is None else str(opts.trace_format),
             float_precision=str(opts.trace_float_precision),
             time_mode=str(opts.trace_time_mode),
         ) as trace_writer, SnapshotWriter(snapshots_path) as snapshot_writer:

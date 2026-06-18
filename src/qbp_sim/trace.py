@@ -1,5 +1,9 @@
 
 from qbp_sim.io.trace import (
+    DEFAULT_TRACE_FORMAT,
+    TRACE_FORMAT_JSONL_ZST,
+    TRACE_FORMAT_PARQUET,
+    TRACE_FORMAT_VORTEX,
     TRACE_TIME_MODE_FULL,
     TRACE_TIME_MODE_NONE,
     EventTraceReader,
@@ -10,15 +14,20 @@ from qbp_sim.io.trace import (
     VortexEventTraceWriter,
     open_event_trace_reader,
     open_event_trace_writer,
+    trace_file_extension,
     trace_columns,
     trace_schema,
 )
 
 __all__ = [
+    "DEFAULT_TRACE_FORMAT",
     "EventTraceReader",
     "EventTraceWriter",
     "ParquetEventTraceReader",
     "ParquetEventTraceWriter",
+    "TRACE_FORMAT_JSONL_ZST",
+    "TRACE_FORMAT_PARQUET",
+    "TRACE_FORMAT_VORTEX",
     "TRACE_TIME_MODE_FULL",
     "TRACE_TIME_MODE_NONE",
     "VortexEventTraceReader",
@@ -26,5 +35,6 @@ __all__ = [
     "open_event_trace_reader",
     "open_event_trace_writer",
     "trace_columns",
+    "trace_file_extension",
     "trace_schema",
 ]

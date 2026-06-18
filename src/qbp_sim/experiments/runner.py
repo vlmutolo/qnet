@@ -16,7 +16,7 @@ from qbp_sim.experiments.common import (
     _write_run_metadata,
 )
 from qbp_sim.experiments.matrix import ExperimentMatrixCase, ExperimentMatrixConfig
-from qbp_sim.io.trace import open_event_trace_writer
+from qbp_sim.io.trace import open_event_trace_writer, trace_file_extension
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +40,7 @@ def _run_matrix_case(
     case_dir.mkdir(parents=True, exist_ok=True)
     lp_json_path = case_dir / "lp_solution.json"
     simulation_config_path = case_dir / "simulation_config.json"
-    trace_path = case_dir / "events.vortex"
+    trace_path = case_dir / f"events{trace_file_extension(case.trace_format)}"
     metadata_path = case_dir / "run_metadata.json"
     resolved_cons_edge_fraction = _cycle_consumption_edge_fraction(
         case.n_nodes,
@@ -97,6 +97,7 @@ def _run_matrix_case(
     snapshot_writer = _MemorySnapshotWriter()
     with open_event_trace_writer(
         trace_path,
+        trace_format=case.trace_format,
         float_precision=case.trace_float_precision,
         time_mode=case.trace_time_mode,
     ) as trace_writer:
@@ -119,6 +120,7 @@ def _run_matrix_case(
         sample_every=case.sample_every,
         burn_in_time=case.burn_in_time,
         trace_float_precision=case.trace_float_precision,
+        trace_format=case.trace_format,
         trace_time_mode=case.trace_time_mode,
         simulation_config_path=simulation_config_path,
         trace_path=trace_path,
@@ -171,6 +173,7 @@ def write_matrix_summary(
         "memory",
         "seed",
         "until_time",
+        "trace_format",
         "final_time",
         "events_processed",
         "pair_generations",
@@ -203,6 +206,7 @@ def write_matrix_summary(
                 "memory": "" if case.memory is None else case.memory,
                 "seed": case.seed,
                 "until_time": case.until_time,
+                "trace_format": case.trace_format,
                 "trace_path": str(run.trace_path),
                 "metadata_path": str(run.metadata_path),
                 "simulation_config_path": str(run.simulation_config_path),

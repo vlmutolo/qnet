@@ -144,6 +144,18 @@ def _add_trace_float_precision_arg(command_parser: argparse.ArgumentParser) -> N
     )
 
 
+def _add_trace_format_arg(command_parser: argparse.ArgumentParser, *, default: str | None = None) -> None:
+    command_parser.add_argument(
+        "--trace-format",
+        choices=("vortex", "parquet", "jsonl_zst"),
+        default=default,
+        help=(
+            "Event trace storage format. Direct run/example commands infer the format from --trace "
+            "unless this is set; experiment commands default to vortex."
+        ),
+    )
+
+
 def _add_trace_time_mode_arg(command_parser: argparse.ArgumentParser) -> None:
     command_parser.add_argument(
         "--trace-time-mode",
@@ -196,6 +208,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
     _add_trace_float_precision_arg(run_parser)
+    _add_trace_format_arg(run_parser)
     _add_trace_time_mode_arg(run_parser)
     run_parser.add_argument(
         "--snapshots",
@@ -234,6 +247,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write every event to a trace file. Use .vortex for compact Vortex, .parquet for buffered Parquet, or .jsonl.zst for compressed JSONL.",
     )
     _add_trace_float_precision_arg(example_parser)
+    _add_trace_format_arg(example_parser)
     _add_trace_time_mode_arg(example_parser)
     example_parser.add_argument(
         "--snapshots",
@@ -378,6 +392,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to write LP outputs, simulation configs, compact Vortex event traces, and run metadata.",
     )
     _add_trace_float_precision_arg(cycle_parser)
+    _add_trace_format_arg(cycle_parser, default="vortex")
     _add_trace_time_mode_arg(cycle_parser)
     _add_instant_service_fulfillment_arg(cycle_parser)
     _add_instant_swap_fulfillment_arg(cycle_parser)
@@ -477,6 +492,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to write LP outputs, headroom configs, compact Vortex event traces, and run metadata.",
     )
     _add_trace_float_precision_arg(headroom_parser)
+    _add_trace_format_arg(headroom_parser, default="vortex")
     _add_trace_time_mode_arg(headroom_parser)
     _add_instant_service_fulfillment_arg(headroom_parser)
     _add_instant_swap_fulfillment_arg(headroom_parser)
@@ -574,6 +590,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to write LP outputs, policy configs, compact Vortex event traces, and run metadata.",
     )
     _add_trace_float_precision_arg(limited_parser)
+    _add_trace_format_arg(limited_parser, default="vortex")
     _add_trace_time_mode_arg(limited_parser)
     _add_instant_service_fulfillment_arg(limited_parser)
     _add_instant_swap_fulfillment_arg(limited_parser)

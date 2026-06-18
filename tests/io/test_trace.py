@@ -28,7 +28,13 @@ from qbp_sim.progress import should_use_progress
 from qbp_sim.snapshots import SnapshotReader, SnapshotWriter
 import qbp_sim.core.producer as producer_module
 from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator, VirtualSwapPolicy, replay_event_stream
-from qbp_sim.trace import EventTraceReader, EventTraceWriter, open_event_trace_reader, open_event_trace_writer
+from qbp_sim.trace import (
+    EventTraceReader,
+    EventTraceWriter,
+    open_event_trace_reader,
+    open_event_trace_writer,
+    trace_file_extension,
+)
 from tests.support import (
     _assert_state_invariants,
     _collect_event_records,
@@ -125,6 +131,25 @@ def test_parquet_trace_writer_records_every_event_and_replays(tmp_path) -> None:
     assert replayed.total_backlog == original.total_backlog
     assert replayed.total_inventory == original.total_inventory
     assert replayed.total_scarcity == original.total_scarcity
+
+
+def test_explicit_trace_format_selects_parquet_independent_of_suffix(tmp_path) -> None:
+    trace_path = tmp_path / "events.trace"
+    config = build_four_node_counterexample()
+    sim = GillespieQBPSimulator(config, seed=131)
+
+    with open_event_trace_writer(trace_path, trace_format="parquet") as trace_writer:
+        original = sim.run(until_time=1.0, max_events=100, sample_every=0, trace_writer=trace_writer)
+
+    parquet_columns = set(pq.ParquetFile(trace_path).schema_arrow.names)
+    assert "event_index" in parquet_columns
+    assert trace_file_extension("parquet") == ".parquet"
+
+    with open_event_trace_reader(trace_path, trace_format="parquet") as trace_reader:
+        events = list(trace_reader)
+
+    assert len(events) == original.events_processed
+    assert events[-1].event_index == original.events_processed
 
 
 def test_parquet_timeless_trace_omits_time_columns_and_replays_state(tmp_path) -> None:

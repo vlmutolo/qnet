@@ -119,6 +119,7 @@ Common options:
 - `--max-events 0`: no event cap. Positive values stop early after that many sampled events.
 - `--sample-every N`: record aggregate snapshots every `N` applied events.
 - `--trace OUTFILE`: write every event. Use `.vortex`, `.parquet`, or `.jsonl.zst`.
+- `--trace-format parquet`: choose the trace writer explicitly instead of inferring from the output filename.
 - `--trace-float-precision float32`: precision for columnar trace floats.
 - `--trace-time-mode none`: omit time/rate fields for smaller event-order traces.
 - `--snapshots OUTFILE`: write sampled aggregate snapshots.
@@ -150,7 +151,7 @@ Each completed case writes:
 
 - `lp_solution.json`: LP benchmark output used to derive the config.
 - `simulation_config.json`: exact simulator input after headroom and policy settings.
-- `events.vortex`: event trace.
+- `events.<format>`: event trace, for example `events.vortex` or `events.parquet`.
 - `run_metadata.json`: seed, horizon, paths, settings, and result counters.
 
 The matrix output directory also contains `summary.csv` with one row per case.
@@ -201,6 +202,7 @@ A `run_metadata.json` file records reproducibility data and final counters:
   "n_nodes": 3,
   "seed": 3,
   "until_time": 2.0,
+  "trace_format": "vortex",
   "trace_time_mode": "none",
   "simulation_config_path": ".../simulation_config.json",
   "trace_path": ".../events.vortex",
@@ -355,6 +357,7 @@ The package root exposes the consumer API. Treat it as the stable Python interfa
 - `VirtualSwapPolicyMode`: enum values `bp`, `limited_info_bp`, `max_min`, `limited_info_max_min`.
 - `TopologyName`: enum values `cycle`, `chain`, `grid`.
 - `TraceFloatPrecision`: enum values `float16`, `float32`, `float64`.
+- `TraceFormat`: enum values `vortex`, `parquet`, `jsonl_zst`.
 - `TraceTimeMode`: enum values `full`, `none`.
 
 == Public Functions
@@ -368,7 +371,7 @@ The package root exposes the consumer API. Treat it as the stable Python interfa
 == Basic Programmatic Run
 
 ```python
-from qbp_sim import RunOptions, build_four_node_example_config, run_simulation
+from qbp_sim import RunOptions, TraceFormat, build_four_node_example_config, run_simulation
 
 config = build_four_node_example_config()
 output = run_simulation(
@@ -376,7 +379,8 @@ output = run_simulation(
     RunOptions(
         until_time=50.0,
         seed=0,
-        trace_path="output/traces/python_example.vortex",
+        trace_path="output/traces/python_example.parquet",
+        trace_format=TraceFormat.PARQUET,
     ),
 )
 print(output.service_ratio)
@@ -445,13 +449,16 @@ for case in matrix.cases():
 
 == Trace Analysis With Polars
 
-Use Polars as the canonical table interface for event traces. Vortex files can be opened as a Polars `LazyFrame`:
+Use Polars as the canonical table interface for event traces. Vortex files can be opened as a Polars `LazyFrame`, while Parquet files can use Polars' native scanner:
 
 ```python
 import polars as pl
 import vortex as vx
 
 lf = vx.open("output/traces/python_example.vortex").to_polars()
+# Or:
+lf = pl.scan_parquet("output/traces/python_example.parquet")
+
 service_ratio = (
     lf.select("event_index", "time", "event_type")
     .with_columns(
@@ -468,7 +475,7 @@ service_ratio = (
 )
 ```
 
-The `examples/` directory has runnable scripts that combine hard-coded typed configs, Vortex traces, Polars metric derivation, and Altair plots.
+The `examples/` directory has runnable scripts that combine hard-coded typed configs, Vortex traces, Polars metric derivation, and 300 dpi Altair PNG plots.
 Low-level modules such as `qbp_sim.core`, `qbp_sim.io`, and `qbp_sim.lp` are available for library development and advanced replay analysis. New users should start with the facade, CLI, and Polars trace tables.
 
 = LP Benchmark
@@ -480,7 +487,7 @@ The experiment matrix command uses the LP builder internally for `cycle`, `chain
 = Performance and Reproducibility
 
 - Use `pueue` for long simulations, benchmark jobs, and analysis runs that should survive shell sessions.
-- Prefer `.vortex` traces for compact columnar event logs.
+- Prefer `.vortex` traces for compact columnar event logs; use `trace_format: "parquet"` when consumers prefer the standard Parquet ecosystem.
 - Use `float32` trace precision by default; use `float64` when exact time/rate precision matters.
 - Use `trace_time_mode: "none"` for smaller traces when event order is enough.
 - Record fixed seeds and keep `run_metadata.json` with every run.
@@ -497,8 +504,8 @@ uv build
 The build writes files like:
 
 ```text
-dist/qbp_sim-0.1.0.tar.gz
-dist/qbp_sim-0.1.0-py3-none-any.whl
+dist/qbp_sim-0.2.0.tar.gz
+dist/qbp_sim-0.2.0-py3-none-any.whl
 ```
 
 The repository also includes a GitHub Actions workflow that runs tests, compiles this Typst manual, builds the wheel and source distribution, and uploads them as downloadable artifacts. Use the `workflow_dispatch` trigger in GitHub when you want an external consumer to download a fresh package artifact without publishing to PyPI.

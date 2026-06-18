@@ -32,6 +32,11 @@ TRACE_COLUMNS = (
 TIME_TRACE_COLUMNS = ("time", "total_rate", "event_rate")
 
 DEFAULT_TRACE_FLOAT_PRECISION = "float32"
+DEFAULT_TRACE_FORMAT = "vortex"
+TRACE_FORMAT_VORTEX = "vortex"
+TRACE_FORMAT_PARQUET = "parquet"
+TRACE_FORMAT_JSONL_ZST = "jsonl_zst"
+TRACE_FORMATS = {TRACE_FORMAT_VORTEX, TRACE_FORMAT_PARQUET, TRACE_FORMAT_JSONL_ZST}
 TRACE_TIME_MODE_FULL = "full"
 TRACE_TIME_MODE_NONE = "none"
 TRACE_TIME_MODES = {TRACE_TIME_MODE_FULL, TRACE_TIME_MODE_NONE}
@@ -102,6 +107,36 @@ def _trace_float_type(float_precision: str) -> pa.DataType:
     except KeyError as exc:
         allowed = ", ".join(sorted(TRACE_FLOAT_TYPES))
         raise ValueError(f"float_precision must be one of: {allowed}.") from exc
+
+
+def normalize_trace_format(trace_format: str) -> str:
+    normalized = str(trace_format).lower().replace("-", "_").replace(".", "_")
+    if normalized in {"json", "jsonl", "jsonl_zstd", "zstd_jsonl"}:
+        normalized = TRACE_FORMAT_JSONL_ZST
+    if normalized not in TRACE_FORMATS:
+        allowed = ", ".join(sorted(TRACE_FORMATS))
+        raise ValueError(f"trace_format must be one of: {allowed}.")
+    return normalized
+
+
+def trace_file_extension(trace_format: str) -> str:
+    normalized = normalize_trace_format(trace_format)
+    if normalized == TRACE_FORMAT_VORTEX:
+        return ".vortex"
+    if normalized == TRACE_FORMAT_PARQUET:
+        return ".parquet"
+    return ".jsonl.zst"
+
+
+def _trace_format_from_path(path: Path) -> str:
+    if path.name.lower().endswith(".jsonl.zst"):
+        return TRACE_FORMAT_JSONL_ZST
+    suffix = path.suffix.lower()
+    if suffix == ".vortex":
+        return TRACE_FORMAT_VORTEX
+    if suffix == ".parquet":
+        return TRACE_FORMAT_PARQUET
+    return TRACE_FORMAT_JSONL_ZST
 
 
 def _validate_float_columns(
@@ -481,23 +516,24 @@ class VortexEventTraceReader:
 def open_event_trace_writer(
     path: str | Path,
     *,
+    trace_format: str | None = None,
     float_precision: str = DEFAULT_TRACE_FLOAT_PRECISION,
     time_mode: str = TRACE_TIME_MODE_FULL,
 ):
     trace_path = Path(path)
-    suffix = trace_path.suffix.lower()
-    if suffix == ".vortex":
+    resolved_trace_format = _trace_format_from_path(trace_path) if trace_format is None else normalize_trace_format(trace_format)
+    if resolved_trace_format == TRACE_FORMAT_VORTEX:
         return VortexEventTraceWriter(trace_path, float_precision=float_precision, time_mode=time_mode)
-    if suffix == ".parquet":
+    if resolved_trace_format == TRACE_FORMAT_PARQUET:
         return ParquetEventTraceWriter(trace_path, float_precision=float_precision, time_mode=time_mode)
     return EventTraceWriter(trace_path, time_mode=time_mode)
 
 
-def open_event_trace_reader(path: str | Path):
+def open_event_trace_reader(path: str | Path, *, trace_format: str | None = None):
     trace_path = Path(path)
-    suffix = trace_path.suffix.lower()
-    if suffix == ".vortex":
+    resolved_trace_format = _trace_format_from_path(trace_path) if trace_format is None else normalize_trace_format(trace_format)
+    if resolved_trace_format == TRACE_FORMAT_VORTEX:
         return VortexEventTraceReader(trace_path)
-    if suffix == ".parquet":
+    if resolved_trace_format == TRACE_FORMAT_PARQUET:
         return ParquetEventTraceReader(trace_path)
     return EventTraceReader(trace_path)
