@@ -75,7 +75,7 @@ A simulation config describes an undirected network with symmetric matrices. The
 - `consumption_rates[x][y]`: demand arrival rate for service on pair `(x,y)`.
 - `swap_rates[i]`: per-node swap opportunity rate.
 - `capacity_headroom`: multiplier applied to controllable generation, swap, and service opportunity rates. Demand arrivals are not scaled.
-- `virtual_swap_policy`: swap-selection policy. The default `global` is full-information backpressure.
+- `virtual_swap_policy`: swap-selection policy. The default `bp` is full-information backpressure.
 
 Minimal example:
 
@@ -95,15 +95,16 @@ Minimal example:
   ],
   "swap_rates": [0.0, 1.0, 1.0, 0.0],
   "capacity_headroom": 1.01,
-  "virtual_swap_policy": {"mode": "global"}
+  "virtual_swap_policy": {"mode": "bp"}
 }
 ```
 
 Supported policy modes:
 
-- `global`: full-information backpressure. Each node scans all swap candidates and chooses the largest positive virtual pressure.
-- `power_of_k_memory`: limited-information backpressure. Each node samples `k` candidates, remembers the best `memory` candidates, and exposes only the best positive remembered candidate.
+- `bp`: full-information backpressure. Each node scans all swap candidates and chooses the largest positive virtual pressure.
+- `limited_info_bp`: limited-information backpressure. Each node samples `k` candidates, remembers the best `memory` candidates, and exposes only the best positive remembered candidate.
 - `max_min`: path-oblivious inventory balancing baseline. It uses physical inventory `Q`, not backpressure scarcity `alpha`.
+- `limited_info_max_min`: limited-information max-min. Each node applies the same `k`-query, `memory`-candidate restriction to max-min swap selection.
 
 = Running Simulations
 
@@ -270,7 +271,7 @@ def load(path):
 
 plot_snapshot_metric_series(
     [
-        ("full info", load("output/full/snapshots.jsonl.zst")),
+        ("bp", load("output/bp/snapshots.jsonl.zst")),
         ("limited", load("output/limited/snapshots.jsonl.zst")),
     ],
     "service_ratio",
@@ -308,7 +309,7 @@ The plot answers: how much capacity slack is needed before service deficit decay
 
 == Limited-Information Service-Ratio Plot
 
-This command compares full-information backpressure against one or more `power_of_k_memory` policies and plots `service_ratio` over log-scaled time:
+This command compares full-information backpressure against one or more `limited_info_bp` policies and plots `service_ratio` over log-scaled time:
 
 ```bash
 uv run qbp-sim limited-info-service-ratio \
@@ -351,7 +352,7 @@ The package root exposes the consumer API. Treat it as the stable Python interfa
 - `ExperimentMatrixCase`: one resolved matrix case.
 - `RunOptions`: dataclass of runtime options for `run_simulation`.
 - `RunOutput`: dataclass containing the `result`, optional trace path, optional snapshot path, and convenience `service_ratio`.
-- `VirtualSwapPolicyMode`: enum values `global`, `power_of_k_memory`, `max_min`.
+- `VirtualSwapPolicyMode`: enum values `bp`, `limited_info_bp`, `max_min`, `limited_info_max_min`.
 - `TopologyName`: enum values `cycle`, `chain`, `grid`.
 - `TraceFloatPrecision`: enum values `float16`, `float32`, `float64`.
 - `TraceTimeMode`: enum values `full`, `none`.
@@ -421,7 +422,7 @@ from qbp_sim.config import VirtualSwapPolicyConfig
 
 base = build_four_node_example_config()
 
-for policy in [VirtualSwapPolicyMode.GLOBAL, VirtualSwapPolicyMode.MAX_MIN]:
+for policy in [VirtualSwapPolicyMode.BP, VirtualSwapPolicyMode.MAX_MIN]:
     config = base.model_copy(
         update={"virtual_swap_policy": VirtualSwapPolicyConfig(mode=policy)}
     )

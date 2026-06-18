@@ -4,8 +4,8 @@
   "consumption_edge_fractions": [null],
   "headrooms": [1.01],
   "policies": [
-    {"mode": "global", "label": "full info"},
-    {"mode": "power_of_k_memory", "k": 1, "memory": 1, "label": "limited k=1, m=1"}
+    {"mode": "bp", "label": "bp"},
+    {"mode": "limited_info_bp", "k": 1, "memory": 1, "label": "limited BP k=1, m=1"}
   ],
   "edge_weights": [10.0],
   "gen_scales": [10.0],

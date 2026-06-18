@@ -21,7 +21,7 @@ gated_test = pytest.mark.skipif(
 
 
 def _limited_policy(k: int, memory: int) -> VirtualSwapPolicy:
-    return VirtualSwapPolicy(mode="power_of_k_memory", k=k, memory=memory)
+    return VirtualSwapPolicy(mode="limited_info_bp", k=k, memory=memory)
 
 
 def _collect_event_records(sim: GillespieQBPSimulator, count: int) -> list[dict[str, int | float | str]]:

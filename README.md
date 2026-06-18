@@ -71,16 +71,16 @@ virtual swap scheduler policy:
 ```json
 {
   "virtual_swap_policy": {
-    "mode": "power_of_k_memory",
+    "mode": "limited_info_bp",
     "k": 4,
     "memory": 8
   }
 }
 ```
 
-The default policy is `global`, which preserves the original backpressure behavior: each node
+The default policy is `bp`, which preserves the original backpressure behavior: each node
 scans every swap candidate and picks the largest positive virtual pressure. The
-`power_of_k_memory` policy is a limited-information variant. On each actor refresh, a node
+`limited_info_bp` policy is a limited-information variant. On each actor refresh, a node
 samples `k` fresh swap candidates, re-scores its remembered candidates, keeps the best `memory`
 candidates it has seen, and exposes only the best positive remembered candidate to the virtual
 swap clock. The centralized simulator still stores dense matrices, but this policy constrains
@@ -95,6 +95,8 @@ backpressure policy: it chooses physical swaps from current inventory `Q`, not s
 preferred output edge with minimum `Q[y,z]`. Demand admission in this mode moves requests directly
 to pending physical service without updating `alpha`, so comparisons against backpressure separate
 the inventory-balancing baseline from the demand-aware control law.
+The `limited_info_max_min` policy applies the same `k`-query, `memory`-candidate restriction to
+max-min swap selection.
 
 The runtime topology is inferred from `generation_rates > 0`, and service hazards default to the
 requested `consumption_rates` on each demanded pair times `capacity_headroom`.
@@ -150,9 +152,10 @@ concrete cases and can be inspected or run through the generic matrix command:
   "consumption_edge_fractions": [null, 0.25],
   "headrooms": [1.0, 1.01],
   "policies": [
-    {"mode": "global", "label": "full info"},
+    {"mode": "bp", "label": "bp"},
     {"mode": "max_min"},
-    {"mode": "power_of_k_memory", "k": 2, "memory": 2}
+    {"mode": "limited_info_bp", "k": 2, "memory": 2},
+    {"mode": "limited_info_max_min", "k": 2, "memory": 2}
   ],
   "seed_offsets": [0, 100],
   "until_time": 100000.0,
@@ -213,7 +216,7 @@ uv run qbp-sim run --config configs/run-001.json --until 100
 Run the built-in example with the limited-information virtual swap policy:
 
 ```bash
-uv run qbp-sim example --until 100 --virtual-swap-policy power-of-k-memory --swap-k 4 --swap-memory 8
+uv run qbp-sim example --until 100 --virtual-swap-policy limited-info-bp --swap-k 4 --swap-memory 8
 ```
 
 Run the built-in example with local instantaneous physical fulfillment enabled:

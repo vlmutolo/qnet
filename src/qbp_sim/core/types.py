@@ -11,14 +11,25 @@ IntArray1D = NDArray[np.int64]
 FloatMatrix = NDArray[np.float64]
 IntMatrix = NDArray[np.int64]
 
-VIRTUAL_SWAP_POLICY_GLOBAL = "global"
-VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY = "power_of_k_memory"
+VIRTUAL_SWAP_POLICY_BP = "bp"
+VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP = "limited_info_bp"
 VIRTUAL_SWAP_POLICY_MAX_MIN = "max_min"
+VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN = "limited_info_max_min"
+
+VIRTUAL_SWAP_POLICY_ALIASES = {
+    "global": VIRTUAL_SWAP_POLICY_BP,
+    "power_of_k_memory": VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
+}
+
+
+def normalize_virtual_swap_policy_mode(mode: str) -> str:
+    normalized = mode.replace("-", "_")
+    return VIRTUAL_SWAP_POLICY_ALIASES.get(normalized, normalized)
 
 
 @dataclass(frozen=True, slots=True)
 class VirtualSwapPolicy:
-    mode: str = VIRTUAL_SWAP_POLICY_GLOBAL
+    mode: str = VIRTUAL_SWAP_POLICY_BP
     k: int = 0
     memory: int = 0
 

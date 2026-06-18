@@ -7,6 +7,7 @@ import numpy as np
 from qbp_sim.cli import _apply_virtual_swap_policy_args, _build_parser
 from qbp_sim.config import SimulationInputConfig
 from qbp_sim.core.replay import replay_event_stream
+import qbp_sim.core.producer as producer_module
 from qbp_sim.events import QBPEvent
 from qbp_sim.simulator import GillespieQBPConfig, GillespieQBPSimulator, VirtualSwapPolicy
 from qbp_sim.trace import EventTraceReader, EventTraceWriter
@@ -19,7 +20,7 @@ def _empty_config(n_nodes: int, *, max_min: bool = True) -> GillespieQBPConfig:
         demand_rates=np.zeros((n_nodes, n_nodes), dtype=np.float64),
         swap_rates=np.zeros(n_nodes, dtype=np.float64),
         service_rates=np.zeros((n_nodes, n_nodes), dtype=np.float64),
-        virtual_swap_policy=VirtualSwapPolicy(mode="max_min" if max_min else "global"),
+        virtual_swap_policy=VirtualSwapPolicy(mode="max_min" if max_min else "bp"),
     )
 
 
@@ -187,6 +188,86 @@ def test_max_min_policy_rejects_unused_limited_information_parameters() -> None:
         assert "does not use k or memory" in str(exc)
     else:
         raise AssertionError("Expected max_min policy with k to fail validation.")
+
+
+def test_limited_info_max_min_selects_best_sampled_preferred_candidate(monkeypatch) -> None:
+    config = replace(
+        _empty_config(4),
+        virtual_swap_policy=VirtualSwapPolicy(mode="limited_info_max_min", k=2, memory=2),
+    )
+    config.swap_rates[0] = 1.0
+    initial_q = np.zeros((4, 4), dtype=np.int64)
+    initial_q[0, 1] = initial_q[1, 0] = 5
+    initial_q[0, 2] = initial_q[2, 0] = 5
+    initial_q[0, 3] = initial_q[3, 0] = 5
+    initial_q[1, 2] = initial_q[2, 1] = 3
+    initial_q[1, 3] = initial_q[3, 1] = 1
+    initial_q[2, 3] = initial_q[3, 2] = 2
+
+    sim = GillespieQBPSimulator(config, seed=108, initial_q=initial_q)
+    producer = sim.producer
+    sampled = np.asarray(
+        [
+            _swap_index(sim, 0, 1, 2),
+            _swap_index(sim, 0, 1, 3),
+        ],
+        dtype=np.int64,
+    )
+
+    def fixed_sample(node: int) -> np.ndarray:
+        return sampled if node == 0 else np.empty(0, dtype=np.int64)
+
+    monkeypatch.setattr(producer, "_sample_limited_max_min_swap_candidates", fixed_sample)
+    producer._refresh_limited_max_min_swap_node(sim.state, 0)
+
+    assert producer.max_min_swap_memory_idx[0].tolist() == sampled[::-1].tolist()
+    assert producer.max_min_swap_memory_output[0].tolist() == [1, 3]
+    assert producer.max_min_swap_best_idx[0] == _swap_index(sim, 0, 1, 3)
+
+
+def test_limited_info_max_min_does_not_use_global_max_min_scan(monkeypatch) -> None:
+    def fail_global_scan(*args, **kwargs):
+        raise AssertionError("limited-info max-min must not use the global max-min scan")
+
+    monkeypatch.setattr(producer_module, "_compute_active_max_min_swap_rates", fail_global_scan)
+    config = replace(
+        _empty_config(4),
+        virtual_swap_policy=VirtualSwapPolicy(mode="limited_info_max_min", k=1, memory=1),
+    )
+    config.swap_rates[0] = 1.0
+    initial_q = np.zeros((4, 4), dtype=np.int64)
+    initial_q[0, 1] = initial_q[1, 0] = 3
+    initial_q[0, 2] = initial_q[2, 0] = 3
+
+    sim = GillespieQBPSimulator(config, seed=109, initial_q=initial_q)
+
+    assert sim.producer.active_max_min_swap_total == 1.0
+    event = sim.produce_next_event(until_time=10.0)
+    assert event is not None
+    assert event.event_type in {"max_min_swap", "max_min_swap_idle"}
+
+
+def test_limited_info_max_min_idle_event_replays() -> None:
+    config = replace(
+        _empty_config(3),
+        virtual_swap_policy=VirtualSwapPolicy(mode="limited_info_max_min", k=1, memory=0),
+    )
+    event = QBPEvent(
+        event_index=1,
+        time=0.0,
+        dt=0.0,
+        total_rate=0.0,
+        event_rate=0.0,
+        event_type="max_min_swap_idle",
+        i=0,
+    )
+
+    sim = GillespieQBPSimulator(config, seed=110)
+    sim.apply_event(event)
+
+    assert sim.events_processed == 1
+    assert sim.swaps_completed == 0
+    assert sim.total_inventory == 0
 
 
 def test_max_min_event_applies_as_concrete_replayable_swap() -> None:

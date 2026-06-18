@@ -6,11 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from qbp_sim.core.types import (
-    VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
     VIRTUAL_SWAP_POLICY_MAX_MIN,
-    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     GillespieQBPConfig,
     VirtualSwapPolicy,
+    normalize_virtual_swap_policy_mode,
 )
 
 
@@ -19,11 +21,16 @@ def _add_virtual_swap_policy_args(command_parser: argparse.ArgumentParser) -> No
     command_parser.add_argument(
         "--virtual-swap-policy",
         choices=[
-            VIRTUAL_SWAP_POLICY_GLOBAL,
-            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_BP,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
             VIRTUAL_SWAP_POLICY_MAX_MIN,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
+            "global",
+            "power_of_k_memory",
             "power-of-k-memory",
             "max-min",
+            "limited-info-bp",
+            "limited-info-max-min",
         ],
         default=None,
         help="Override the virtual swap scheduler policy.",
@@ -32,18 +39,18 @@ def _add_virtual_swap_policy_args(command_parser: argparse.ArgumentParser) -> No
         "--swap-k",
         type=int,
         default=None,
-        help="Fresh candidate swaps queried per actor refresh for power_of_k_memory.",
+        help="Fresh candidate swaps queried per actor refresh for limited-info policies.",
     )
     command_parser.add_argument(
         "--swap-memory",
         type=int,
         default=None,
-        help="Best candidate swaps remembered per actor for power_of_k_memory.",
+        help="Best candidate swaps remembered per actor for limited-info policies.",
     )
 
 
 def _normalize_virtual_swap_policy_mode(mode: str) -> str:
-    return mode.replace("-", "_")
+    return normalize_virtual_swap_policy_mode(mode)
 
 
 def _apply_virtual_swap_policy_args(config: GillespieQBPConfig, args: argparse.Namespace) -> GillespieQBPConfig:
@@ -56,7 +63,7 @@ def _apply_virtual_swap_policy_args(config: GillespieQBPConfig, args: argparse.N
     mode = (
         _normalize_virtual_swap_policy_mode(requested_mode)
         if requested_mode is not None
-        else VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY
+        else VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP
     )
     current = config.virtual_swap_policy
     return replace(
@@ -483,7 +490,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     limited_parser = subparsers.add_parser(
         "limited-info-service-ratio",
-        help="Compare full-info BP against limited-info power-of-k-memory policies using service_ratio from t=0.",
+        help="Compare BP against limited-info BP policies using service_ratio from t=0.",
     )
     limited_parser.add_argument(
         "--n",

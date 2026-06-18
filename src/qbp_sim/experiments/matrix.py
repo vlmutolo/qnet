@@ -8,9 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from qbp_sim.config import VirtualSwapPolicyConfig
 from qbp_sim.core.types import (
-    VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
     VIRTUAL_SWAP_POLICY_MAX_MIN,
-    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+    normalize_virtual_swap_policy_mode,
 )
 
 TopologyName = Literal["cycle", "chain", "grid"]
@@ -38,54 +40,57 @@ class ExperimentPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: str = Field(
-        default=VIRTUAL_SWAP_POLICY_GLOBAL,
-        description="Virtual swap policy: global, power_of_k_memory, or max_min.",
+        default=VIRTUAL_SWAP_POLICY_BP,
+        description="Virtual swap policy: bp, limited_info_bp, max_min, or limited_info_max_min.",
     )
     k: int | None = Field(
         default=None,
-        description="Fresh candidate swaps queried per actor refresh for power_of_k_memory.",
+        description="Fresh candidate swaps queried per actor refresh for limited-info policies.",
     )
     memory: int | None = Field(
         default=None,
-        description="Remembered best candidates per actor for power_of_k_memory.",
+        description="Remembered best candidates per actor for limited-info policies.",
     )
     label: str | None = Field(
         default=None,
-        description="Optional plot/run label. Defaults to full info or limited k=<k>, m=<memory>.",
+        description="Optional plot/run label. Defaults to bp, max-min, or a limited-info policy label.",
     )
 
     @model_validator(mode="after")
     def _validate_policy(self) -> ExperimentPolicyConfig:
-        self.mode = self.mode.replace("-", "_")
+        self.mode = normalize_virtual_swap_policy_mode(self.mode)
         if self.mode not in {
-            VIRTUAL_SWAP_POLICY_GLOBAL,
-            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_BP,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
             VIRTUAL_SWAP_POLICY_MAX_MIN,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
         }:
             raise ValueError(
                 "policy mode must be either "
-                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r}, {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}, "
-                f"or {VIRTUAL_SWAP_POLICY_MAX_MIN!r}."
+                f"{VIRTUAL_SWAP_POLICY_BP!r}, {VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP!r}, "
+                f"{VIRTUAL_SWAP_POLICY_MAX_MIN!r}, or {VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN!r}."
             )
-        if self.mode in {VIRTUAL_SWAP_POLICY_GLOBAL, VIRTUAL_SWAP_POLICY_MAX_MIN}:
+        if self.mode in {VIRTUAL_SWAP_POLICY_BP, VIRTUAL_SWAP_POLICY_MAX_MIN}:
             if self.k is not None or self.memory is not None:
                 raise ValueError(f"{self.mode} policy must not set k or memory.")
             return self
         if self.k is None or self.k <= 0:
-            raise ValueError("power_of_k_memory policy requires positive k.")
+            raise ValueError(f"{self.mode} policy requires positive k.")
         if self.memory is None or self.memory < 0:
-            raise ValueError("power_of_k_memory policy requires non-negative memory.")
+            raise ValueError(f"{self.mode} policy requires non-negative memory.")
         return self
 
     @property
     def resolved_label(self) -> str:
         if self.label is not None:
             return self.label
-        if self.mode == VIRTUAL_SWAP_POLICY_GLOBAL:
-            return "full info"
+        if self.mode == VIRTUAL_SWAP_POLICY_BP:
+            return "bp"
         if self.mode == VIRTUAL_SWAP_POLICY_MAX_MIN:
             return "max-min"
-        return f"limited k={self.k}, m={self.memory}"
+        if self.mode == VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP:
+            return f"limited BP k={self.k}, m={self.memory}"
+        return f"limited max-min k={self.k}, m={self.memory}"
 
     def to_virtual_swap_policy_config(self) -> VirtualSwapPolicyConfig:
         return VirtualSwapPolicyConfig(
@@ -168,8 +173,8 @@ class ExperimentMatrixConfig(BaseModel):
     )
     policies: list[ExperimentPolicyConfig] = Field(
         default_factory=lambda: [
-            ExperimentPolicyConfig(mode=VIRTUAL_SWAP_POLICY_GLOBAL),
-            ExperimentPolicyConfig(mode=VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY, k=1, memory=1),
+            ExperimentPolicyConfig(mode=VIRTUAL_SWAP_POLICY_BP),
+            ExperimentPolicyConfig(mode=VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP, k=1, memory=1),
         ],
         description="Virtual-swap policy variants to test.",
     )

@@ -14,6 +14,6 @@
   "swap_rates": [0.0, 1.0, 1.0, 0.0],
   "capacity_headroom": 1.01,
   "virtual_swap_policy": {
-    "mode": "global"
+    "mode": "bp"
   }
 }

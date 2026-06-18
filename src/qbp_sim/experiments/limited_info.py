@@ -80,16 +80,16 @@ def run_limited_info_service_ratio_experiment(
     base_simulation_config_path.write_text(base_simulation_input.model_dump_json(indent=2), encoding="utf-8")
 
     variants: list[tuple[str, str, int | None, int | None, SimulationInputConfig]] = [
-        ("full info", "global", None, None, base_simulation_input)
+        ("bp", "bp", None, None, base_simulation_input)
     ]
     for k, memory in limited_policies:
         if k <= 0 or memory < 0:
             raise ValueError("limited policy k must be positive and memory must be non-negative.")
-        policy = VirtualSwapPolicyConfig(mode="power_of_k_memory", k=k, memory=memory)
+        policy = VirtualSwapPolicyConfig(mode="limited_info_bp", k=k, memory=memory)
         variants.append(
             (
-                f"limited k={k}, m={memory}",
-                "power_of_k_memory",
+                f"limited BP k={k}, m={memory}",
+                "limited_info_bp",
                 k,
                 memory,
                 base_simulation_input.model_copy(update={"virtual_swap_policy": policy}),

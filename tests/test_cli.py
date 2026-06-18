@@ -76,8 +76,8 @@ def test_cli_matrix_dry_run_expands_cases(tmp_path, capsys) -> None:
                 "topologies": ["cycle"],
                 "graph_sizes": [3],
                 "policies": [
-                    {"mode": "global"},
-                    {"mode": "power_of_k_memory", "k": 1, "memory": 1},
+                    {"mode": "bp"},
+                    {"mode": "limited_info_bp", "k": 1, "memory": 1},
                 ],
                 "until_time": 1.0,
                 "sample_every": 10,
@@ -90,7 +90,7 @@ def test_cli_matrix_dry_run_expands_cases(tmp_path, capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["case_count"] == 2
-    assert [case["policy_mode"] for case in payload["cases"]] == ["global", "power_of_k_memory"]
+    assert [case["policy_mode"] for case in payload["cases"]] == ["bp", "limited_info_bp"]
     assert not (tmp_path / "runs").exists()
 
 
@@ -104,7 +104,7 @@ def test_cli_matrix_tiny_run_writes_artifacts(tmp_path) -> None:
                 "graph_sizes": [3],
                 "consumption_edge_fractions": [None],
                 "headrooms": [1.01],
-                "policies": [{"mode": "global"}],
+                "policies": [{"mode": "bp"}],
                 "gen_scales": [10.0],
                 "cons_scales": [0.1],
                 "swap_rates": [20.0],

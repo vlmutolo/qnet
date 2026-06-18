@@ -21,8 +21,9 @@ from qbp_sim.core.kernels import (
     _update_virtual_swap_alpha_change_nonendpoints,
 )
 from qbp_sim.core.types import (
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
     VIRTUAL_SWAP_POLICY_MAX_MIN,
-    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     Array1D,
     GillespieQBPConfig,
     IntArray1D,
@@ -88,15 +89,27 @@ class GillespieQBPEventProducer:
         self.max_min_swap_best_idx = np.full(self.n_nodes, -1, dtype=np.int64)
         self.max_min_swap_node_rates = np.zeros(self.n_nodes, dtype=np.float64)
         self.active_max_min_swap_total = 0.0
+        self.max_min_swap_memory_idx = np.empty((0, 0), dtype=np.int64)
+        self.max_min_swap_memory_output = np.empty((0, 0), dtype=np.int64)
+        if self._uses_limited_max_min_policy():
+            memory_size = int(config.virtual_swap_policy.memory)
+            self.max_min_swap_memory_idx = np.full((self.n_nodes, memory_size), -1, dtype=np.int64)
+            self.max_min_swap_memory_output = np.full((self.n_nodes, memory_size), -1, dtype=np.int64)
         self.rng = np.random.default_rng(seed)
         policy_seed = None if seed is None else int(seed) + 1_000_003
         self.policy_rng = np.random.default_rng(policy_seed)
 
     def _uses_limited_virtual_swap_policy(self) -> bool:
-        return self.config.virtual_swap_policy.mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY
+        return self.config.virtual_swap_policy.mode == VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP
 
     def _uses_max_min_policy(self) -> bool:
-        return self.config.virtual_swap_policy.mode == VIRTUAL_SWAP_POLICY_MAX_MIN
+        return self.config.virtual_swap_policy.mode in {
+            VIRTUAL_SWAP_POLICY_MAX_MIN,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
+        }
+
+    def _uses_limited_max_min_policy(self) -> bool:
+        return self.config.virtual_swap_policy.mode == VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN
 
     def initialize(self, state: QBPState) -> None:
         if self._uses_max_min_policy():
@@ -127,7 +140,10 @@ class GillespieQBPEventProducer:
         self.active_virtual_swap_total = 0.0
         self.active_physical_swap_total = 0.0
         self.active_max_min_swap_total = 0.0
-        if self._uses_max_min_policy():
+        if self._uses_limited_max_min_policy():
+            for node in range(self.n_nodes):
+                self._initialize_limited_max_min_swap_node(node)
+        elif self._uses_max_min_policy():
             self.active_max_min_swap_total = _compute_active_max_min_swap_rates(
                 state.q,
                 self.swap_node_starts,
@@ -209,6 +225,9 @@ class GillespieQBPEventProducer:
         offsets = self.policy_rng.choice(count, size=k, replace=False)
         return np.asarray(offsets, dtype=np.int64) + start
 
+    def _sample_limited_max_min_swap_candidates(self, node: int) -> NDArray[np.int64]:
+        return self._sample_limited_virtual_swap_candidates(node)
+
     def _refresh_limited_virtual_swap_node(self, state: QBPState, node: int) -> None:
         old_rate = float(self.virtual_swap_node_rates[node])
         memory_size = int(self.config.virtual_swap_policy.memory)
@@ -259,8 +278,69 @@ class GillespieQBPEventProducer:
         self.physical_swap_node_rates[node] = new_rate
         self.active_physical_swap_total += new_rate - old_rate
 
+    def _initialize_limited_max_min_swap_node(self, node: int) -> None:
+        old_rate = float(self.max_min_swap_node_rates[node])
+        self.max_min_swap_best_output[node] = -1
+        self.max_min_swap_best_idx[node] = -1
+        has_candidates = self.swap_node_starts[node] < self.swap_node_starts[node + 1]
+        new_rate = float(self.config.swap_rates[node]) if has_candidates else 0.0
+        self.max_min_swap_node_rates[node] = new_rate
+        self.active_max_min_swap_total += new_rate - old_rate
+
+    def _max_min_swap_output(self, state: QBPState, swap_idx: int) -> int:
+        i = int(self.swap_i[swap_idx])
+        y = int(self.swap_y[swap_idx])
+        z = int(self.swap_z[swap_idx])
+        output_count = int(state.q[y, z])
+        if state.q[i, y] > output_count + 1 and state.q[i, z] > output_count + 1:
+            return output_count
+        return -1
+
+    def _refresh_limited_max_min_swap_node(self, state: QBPState, node: int) -> None:
+        old_rate = float(self.max_min_swap_node_rates[node])
+        memory_size = int(self.config.virtual_swap_policy.memory)
+        candidates: dict[int, int] = {}
+
+        for slot in range(memory_size):
+            remembered_idx = int(self.max_min_swap_memory_idx[node, slot])
+            if remembered_idx >= 0:
+                candidates[remembered_idx] = self._max_min_swap_output(state, remembered_idx)
+
+        for sampled_idx in self._sample_limited_max_min_swap_candidates(node):
+            idx = int(sampled_idx)
+            candidates[idx] = self._max_min_swap_output(state, idx)
+
+        ranked = sorted(
+            candidates.items(),
+            key=lambda item: (
+                0 if item[1] >= 0 else 1,
+                item[1] if item[1] >= 0 else 9223372036854775807,
+                item[0],
+            ),
+        )
+        self.max_min_swap_memory_idx[node, :] = -1
+        self.max_min_swap_memory_output[node, :] = -1
+        for slot, (idx, output_count) in enumerate(ranked[:memory_size]):
+            self.max_min_swap_memory_idx[node, slot] = idx
+            self.max_min_swap_memory_output[node, slot] = output_count
+
+        best_idx = -1
+        best_output = -1
+        if ranked and ranked[0][1] >= 0:
+            best_idx = int(ranked[0][0])
+            best_output = int(ranked[0][1])
+
+        self.max_min_swap_best_output[node] = best_output
+        self.max_min_swap_best_idx[node] = best_idx
+        has_candidates = self.swap_node_starts[node] < self.swap_node_starts[node + 1]
+        new_rate = float(self.config.swap_rates[node]) if has_candidates else 0.0
+        self.max_min_swap_node_rates[node] = new_rate
+        self.active_max_min_swap_total += new_rate - old_rate
+
     def _recompute_max_min_swaps(self, state: QBPState) -> None:
         if not self._uses_max_min_policy():
+            return
+        if self._uses_limited_max_min_policy():
             return
         self.active_max_min_swap_total = _compute_active_max_min_swap_rates(
             state.q,
@@ -531,7 +611,22 @@ class GillespieQBPEventProducer:
             )
 
         node = _sample_index(self.rng, self.max_min_swap_node_rates, max_min_swap_total)
+        if self._uses_limited_max_min_policy():
+            self._refresh_limited_max_min_swap_node(state, node)
         idx = int(self.max_min_swap_best_idx[node])
+        if idx < 0:
+            return (
+                QBPEvent(
+                    event_index=event_index,
+                    time=next_time,
+                    dt=dt,
+                    total_rate=total_rate,
+                    event_type="max_min_swap_idle",
+                    event_rate=float(self.max_min_swap_node_rates[node]),
+                    i=int(node),
+                ),
+                False,
+            )
         return (
             QBPEvent(
                 event_index=event_index,

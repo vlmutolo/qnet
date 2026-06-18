@@ -17,7 +17,10 @@ def test_public_package_exports_consumer_facade_only() -> None:
     assert ExperimentMatrixConfig is not None
     assert RunOptions is not None
     assert SimulationInputConfig is not None
+    assert VirtualSwapPolicyMode.BP == "bp"
+    assert VirtualSwapPolicyMode.LIMITED_INFO_BP == "limited_info_bp"
     assert VirtualSwapPolicyMode.MAX_MIN == "max_min"
+    assert VirtualSwapPolicyMode.LIMITED_INFO_MAX_MIN == "limited_info_max_min"
     assert TraceTimeMode.NONE == "none"
     assert build_four_node_example_config is not None
     assert replay_trace is not None

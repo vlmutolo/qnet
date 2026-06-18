@@ -80,7 +80,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
                 "instant_service_fulfillment": True,
                 "instant_swap_fulfillment": True,
                 "virtual_swap_policy": {
-                    "mode": "power_of_k_memory",
+                    "mode": "limited_info_bp",
                     "k": 2,
                     "memory": 0,
                 },
@@ -101,7 +101,7 @@ def test_simulation_input_config_loads_json_and_infers_runtime_config(tmp_path) 
     assert runtime.service_rates[0, 1] == 0.0
     assert runtime.service_rates[0, 3] == 2.5
     assert runtime.swap_rates[1] == 1.25
-    assert runtime.virtual_swap_policy.mode == "power_of_k_memory"
+    assert runtime.virtual_swap_policy.mode == "limited_info_bp"
     assert runtime.virtual_swap_policy.k == 2
     assert runtime.virtual_swap_policy.memory == 0
     assert runtime.instant_service_fulfillment is True

@@ -39,14 +39,14 @@ from tests.support import (
 )
 
 
-def test_default_virtual_swap_policy_matches_explicit_global_policy() -> None:
+def test_default_virtual_swap_policy_matches_explicit_bp_policy() -> None:
     default_config = build_four_node_counterexample()
-    explicit_global_config = replace(default_config, virtual_swap_policy=VirtualSwapPolicy(mode="global"))
+    explicit_bp_config = replace(default_config, virtual_swap_policy=VirtualSwapPolicy(mode="bp"))
 
     default_records = _collect_event_records(GillespieQBPSimulator(default_config, seed=47), 200)
-    explicit_global_records = _collect_event_records(GillespieQBPSimulator(explicit_global_config, seed=47), 200)
+    explicit_bp_records = _collect_event_records(GillespieQBPSimulator(explicit_bp_config, seed=47), 200)
 
-    assert explicit_global_records == default_records
+    assert explicit_bp_records == default_records
 
 
 def test_limited_information_virtual_swap_policy_builds_and_runs() -> None:

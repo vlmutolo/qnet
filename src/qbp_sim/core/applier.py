@@ -107,6 +107,8 @@ class QBPEventApplier:
             )
             state.swaps_completed += 1
             state.total_inventory_count -= 1
+        elif event.event_type == "max_min_swap_idle":
+            _require(event.i, "i")
         else:
             raise ValueError(f"Unknown event type: {event.event_type}")
 

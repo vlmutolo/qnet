@@ -15,15 +15,17 @@ from qbp_sim.core.indexing import (
 )
 from qbp_sim.core.producer import GillespieQBPEventProducer
 from qbp_sim.core.types import (
-    VIRTUAL_SWAP_POLICY_GLOBAL,
+    VIRTUAL_SWAP_POLICY_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
+    VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
     VIRTUAL_SWAP_POLICY_MAX_MIN,
-    VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
     GillespieQBPConfig,
     GillespieQBPResult,
     IntArray1D,
     IntMatrix,
     QBPState,
     VirtualSwapPolicy,
+    normalize_virtual_swap_policy_mode,
 )
 from qbp_sim.io.events import QBPEvent
 from qbp_sim.io.snapshots import QBPSnapshot, SnapshotWriter
@@ -380,25 +382,26 @@ class GillespieQBPSimulator(InstantFulfillmentMixin):
         if isinstance(policy, dict):
             policy = VirtualSwapPolicy(**policy)
 
-        mode = str(policy.mode).replace("-", "_")
+        mode = normalize_virtual_swap_policy_mode(str(policy.mode))
         if mode not in {
-            VIRTUAL_SWAP_POLICY_GLOBAL,
-            VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY,
+            VIRTUAL_SWAP_POLICY_BP,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP,
             VIRTUAL_SWAP_POLICY_MAX_MIN,
+            VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN,
         }:
             raise ValueError(
                 "virtual_swap_policy.mode must be either "
-                f"{VIRTUAL_SWAP_POLICY_GLOBAL!r}, {VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY!r}, "
-                f"or {VIRTUAL_SWAP_POLICY_MAX_MIN!r}."
+                f"{VIRTUAL_SWAP_POLICY_BP!r}, {VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP!r}, "
+                f"{VIRTUAL_SWAP_POLICY_MAX_MIN!r}, or {VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN!r}."
             )
 
         k = int(policy.k)
         memory = int(policy.memory)
         if k < 0 or memory < 0:
             raise ValueError("virtual_swap_policy k and memory must be non-negative.")
-        if mode == VIRTUAL_SWAP_POLICY_POWER_OF_K_MEMORY and k <= 0:
-            raise ValueError("power_of_k_memory virtual swap policy requires positive k.")
-        if mode == VIRTUAL_SWAP_POLICY_MAX_MIN and (k != 0 or memory != 0):
-            raise ValueError("max_min virtual swap policy does not use k or memory.")
+        if mode in {VIRTUAL_SWAP_POLICY_LIMITED_INFO_BP, VIRTUAL_SWAP_POLICY_LIMITED_INFO_MAX_MIN} and k <= 0:
+            raise ValueError(f"{mode} virtual swap policy requires positive k.")
+        if mode in {VIRTUAL_SWAP_POLICY_BP, VIRTUAL_SWAP_POLICY_MAX_MIN} and (k != 0 or memory != 0):
+            raise ValueError(f"{mode} virtual swap policy does not use k or memory.")
 
         return VirtualSwapPolicy(mode=mode, k=k, memory=memory)

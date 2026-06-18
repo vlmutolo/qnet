@@ -15,9 +15,10 @@ from qbp_sim.io.trace import open_event_trace_reader, open_event_trace_writer
 
 
 class VirtualSwapPolicyMode(StrEnum):
-    GLOBAL = "global"
-    POWER_OF_K_MEMORY = "power_of_k_memory"
+    BP = "bp"
+    LIMITED_INFO_BP = "limited_info_bp"
     MAX_MIN = "max_min"
+    LIMITED_INFO_MAX_MIN = "limited_info_max_min"
 
 
 class TopologyName(StrEnum):

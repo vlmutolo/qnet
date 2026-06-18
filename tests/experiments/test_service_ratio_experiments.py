@@ -55,7 +55,7 @@ def test_limited_info_service_ratio_experiment_writes_events_metadata_and_plot(t
     plot_path = tmp_path / "limited-info-service-ratio.png"
     plot_limited_info_service_ratio_runs(runs, plot_path)
 
-    assert [run.policy_label for run in runs] == ["full info", "limited k=1, m=1"]
+    assert [run.policy_label for run in runs] == ["bp", "limited BP k=1, m=1"]
     assert all(run.snapshots for run in runs)
     assert all(run.trace_path.exists() for run in runs)
     assert all(run.trace_path.suffix == ".vortex" for run in runs)
