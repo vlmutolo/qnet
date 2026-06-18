@@ -443,23 +443,33 @@ for case in matrix.cases():
     print(case.slug, case.policy_label, case.seed)
 ```
 
-== Advanced Analysis Using Lower-Level Readers
+== Trace Analysis With Polars
 
-The facade intentionally hides event internals, but advanced analysis can still use explicit lower-level modules:
+Use Polars as the canonical table interface for event traces. Vortex files can be opened as a Polars `LazyFrame`:
 
 ```python
-from collections import Counter
-from qbp_sim.trace import open_event_trace_reader
+import polars as pl
+import vortex as vx
 
-counts = Counter()
-with open_event_trace_reader("output/traces/python_example.vortex") as reader:
-    for event in reader:
-        counts[event.event_type] += 1
-
-print(counts)
+lf = vx.open("output/traces/python_example.vortex").to_polars()
+service_ratio = (
+    lf.select("event_index", "time", "event_type")
+    .with_columns(
+        demand_arrivals=(pl.col("event_type") == "demand_arrival").cast(pl.Int64).cum_sum(),
+        services_completed=(pl.col("event_type") == "physical_service").cast(pl.Int64).cum_sum(),
+    )
+    .with_columns(
+        service_ratio=pl.when(pl.col("demand_arrivals") > 0)
+        .then(pl.col("services_completed") / pl.col("demand_arrivals"))
+        .otherwise(0.0)
+    )
+    .select("event_index", "time", "service_ratio")
+    .collect()
+)
 ```
 
-Low-level modules such as `qbp_sim.core`, `qbp_sim.io`, and `qbp_sim.lp` are available for library development and advanced analysis. New users should start with the facade and CLI.
+The `examples/` directory has runnable scripts that combine hard-coded typed configs, Vortex traces, Polars metric derivation, and Altair plots.
+Low-level modules such as `qbp_sim.core`, `qbp_sim.io`, and `qbp_sim.lp` are available for library development and advanced replay analysis. New users should start with the facade, CLI, and Polars trace tables.
 
 = LP Benchmark
 

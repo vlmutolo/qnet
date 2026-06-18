@@ -12,6 +12,7 @@ dependencies = [
     "networkx>=3.5",
     "numba>=0.65.0",
     "numpy>=2.4.4",
+    "polars>=1.41.2",
     "pyarrow>=24.0.0",
     "pydantic>=2.13.1",
     "scipy>=1.16.3",

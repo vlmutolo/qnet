@@ -21,6 +21,7 @@ uv run qbp-sim example --until 50 --snapshots output/snapshots/example.jsonl.zst
 uv run qbp-sim replay --trace output/traces/example.vortex
 uv run qbp-sim analyze --snapshots output/snapshots/example.jsonl.zst
 uv run qbp-sim matrix --config docs/examples/matrix_config.json --output-dir output/matrix_demo --dry-run
+uv run examples/01_basic_run_service_ratio.py
 uv run pytest
 ```
 
@@ -29,6 +30,21 @@ Build it with:
 
 ```bash
 typst compile docs/manual.typ docs/qbp-sim.pdf
+```
+
+## Python examples
+
+The `examples/` directory contains runnable consumer scripts that hard-code typed
+`SimulationInputConfig` objects, write Vortex event traces, and use Polars as the canonical trace
+analysis layer through `vx.open(path).to_polars()`. Each example writes traces and Altair HTML
+plots under ignored `output/examples/`.
+
+```bash
+uv run examples/01_basic_run_service_ratio.py
+uv run examples/02_compare_policies.py
+uv run examples/03_headroom_sweep.py
+uv run examples/04_instant_fulfillment_modes.py
+uv run examples/05_trace_summary_and_event_mix.py
 ```
 
 ## Current model
