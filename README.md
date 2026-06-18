@@ -45,6 +45,7 @@ uv run examples/02_compare_policies.py
 uv run examples/03_headroom_sweep.py
 uv run examples/04_instant_fulfillment_modes.py
 uv run examples/05_trace_summary_and_event_mix.py
+uv run examples/06_lp_derived_config.py
 ```
 
 ## Current model

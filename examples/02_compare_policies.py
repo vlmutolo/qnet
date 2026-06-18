@@ -49,6 +49,25 @@ def service_ratio_frame(trace_path: Path, policy_label: str, sample_every: int =
     )
 
 
+def final_service_summary(trace_path: Path, policy_label: str) -> pl.DataFrame:
+    lf = vx.open(str(trace_path)).to_polars()
+    return (
+        lf.select("event_type")
+        .select(
+            demand_arrivals=(pl.col("event_type") == "demand_arrival").sum(),
+            services_completed=(pl.col("event_type") == "physical_service").sum(),
+        )
+        .with_columns(
+            policy=pl.lit(policy_label),
+            final_service_ratio=pl.when(pl.col("demand_arrivals") > 0)
+            .then(pl.col("services_completed") / pl.col("demand_arrivals"))
+            .otherwise(0.0),
+        )
+        .select("policy", "demand_arrivals", "services_completed", "final_service_ratio")
+        .collect()
+    )
+
+
 def main() -> None:
     output_dir = Path("output/examples/02_compare_policies")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +79,7 @@ def main() -> None:
     ]
 
     frames: list[pl.DataFrame] = []
+    summaries: list[pl.DataFrame] = []
     for offset, (label, policy) in enumerate(policies):
         trace_path = output_dir / f"{label}.vortex"
         run_simulation(
@@ -74,6 +94,7 @@ def main() -> None:
             ),
         )
         frames.append(service_ratio_frame(trace_path, label))
+        summaries.append(final_service_summary(trace_path, label))
 
     df = pl.concat(frames)
     plot_path = output_dir / "policy_service_ratio.html"
@@ -90,7 +111,7 @@ def main() -> None:
     )
     chart.save(plot_path)
 
-    final = df.group_by("policy").agg(pl.col("service_ratio").last().alias("final_service_ratio")).sort("policy")
+    final = pl.concat(summaries).sort("policy")
     print(final)
     print(f"plot={plot_path}")
 
