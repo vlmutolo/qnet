@@ -25,7 +25,7 @@ def _simulation_config(
     )
 
 
-def build_lp_configs() -> list[tuple[str, str, str, SimulationInputConfig]]:
+def build_simulation_variants() -> list[tuple[str, str, SimulationInputConfig]]:
     num_nodes = 8
     generation_capacity = linear.create_cycle_adjacency_matrix(num_nodes, edge_weight=10.0)
     consumption_demand = linear.create_sparse_symmetric_adjacency_matrix(
@@ -56,27 +56,13 @@ def build_lp_configs() -> list[tuple[str, str, str, SimulationInputConfig]]:
     print(f"uniform_swap_rate={uniform_swap_rate:.6f}")
     return [
         (
-            "bp_lp_node_totals",
-            "bp",
-            "lp_node_totals",
-            _simulation_config(lp_config, swap_rates=lp_swap_rates.tolist(), policy_mode="bp"),
-        ),
-        (
-            "max_min_lp_node_totals",
-            "max_min",
-            "lp_node_totals",
-            _simulation_config(lp_config, swap_rates=lp_swap_rates.tolist(), policy_mode="max_min"),
-        ),
-        (
             "bp_uniform_lp_total_per_node",
             "bp",
-            "uniform_lp_total_per_node",
             _simulation_config(lp_config, swap_rates=uniform_swap_rates, policy_mode="bp"),
         ),
         (
             "max_min_uniform_lp_total_per_node",
             "max_min",
-            "uniform_lp_total_per_node",
             _simulation_config(lp_config, swap_rates=uniform_swap_rates, policy_mode="max_min"),
         ),
     ]
@@ -86,7 +72,6 @@ def service_ratio_frame(
     trace_path: Path,
     run_label: str,
     policy: str,
-    swap_rate_mode: str,
     sample_every: int = 50,
 ) -> pl.DataFrame:
     lf = pl.scan_parquet(trace_path)
@@ -100,7 +85,6 @@ def service_ratio_frame(
         .with_columns(
             run=pl.lit(run_label),
             policy=pl.lit(policy),
-            swap_rate_mode=pl.lit(swap_rate_mode),
             service_ratio=pl.when(pl.col("demand_arrivals") > 0)
             .then(pl.col("services_completed") / pl.col("demand_arrivals"))
             .otherwise(0.0),
@@ -108,7 +92,6 @@ def service_ratio_frame(
         .select(
             "run",
             "policy",
-            "swap_rate_mode",
             "event_index",
             "time",
             "demand_arrivals",
@@ -119,7 +102,7 @@ def service_ratio_frame(
     )
 
 
-def final_service_summary(trace_path: Path, run_label: str, policy: str, swap_rate_mode: str) -> pl.DataFrame:
+def final_service_summary(trace_path: Path, run_label: str, policy: str) -> pl.DataFrame:
     lf = pl.scan_parquet(trace_path)
     return (
         lf.select("event_type")
@@ -130,12 +113,11 @@ def final_service_summary(trace_path: Path, run_label: str, policy: str, swap_ra
         .with_columns(
             run=pl.lit(run_label),
             policy=pl.lit(policy),
-            swap_rate_mode=pl.lit(swap_rate_mode),
             final_service_ratio=pl.when(pl.col("demand_arrivals") > 0)
             .then(pl.col("services_completed") / pl.col("demand_arrivals"))
             .otherwise(0.0),
         )
-        .select("run", "policy", "swap_rate_mode", "demand_arrivals", "services_completed", "final_service_ratio")
+        .select("run", "policy", "demand_arrivals", "services_completed", "final_service_ratio")
         .collect()
     )
 
@@ -146,7 +128,7 @@ def main() -> None:
 
     frames: list[pl.DataFrame] = []
     summaries: list[pl.DataFrame] = []
-    for offset, (run_label, policy, swap_rate_mode, config) in enumerate(build_lp_configs()):
+    for offset, (run_label, policy, config) in enumerate(build_simulation_variants()):
         trace_path = output_dir / f"{run_label}.parquet"
         run_simulation(
             config,
@@ -160,8 +142,8 @@ def main() -> None:
                 progress=False,
             ),
         )
-        frames.append(service_ratio_frame(trace_path, run_label, policy, swap_rate_mode))
-        summaries.append(final_service_summary(trace_path, run_label, policy, swap_rate_mode))
+        frames.append(service_ratio_frame(trace_path, run_label, policy))
+        summaries.append(final_service_summary(trace_path, run_label, policy))
 
     df = pl.concat(frames)
     plot_path = output_dir / "uniform_lp_swap_rate_service_ratio.png"
@@ -172,12 +154,9 @@ def main() -> None:
             x=alt.X("time:Q", title="simulation time"),
             y=alt.Y("service_ratio:Q", title="service ratio", scale=alt.Scale(domain=[0, 1])),
             color=alt.Color("policy:N", title="policy"),
-            strokeDash=alt.StrokeDash("swap_rate_mode:N", title="swap rate mode"),
-            detail="run:N",
             tooltip=[
                 "run:N",
                 "policy:N",
-                "swap_rate_mode:N",
                 "event_index:Q",
                 "time:Q",
                 "demand_arrivals:Q",
@@ -185,11 +164,11 @@ def main() -> None:
                 "service_ratio:Q",
             ],
         )
-        .properties(width=860, height=460, title="BP and Max-Min from LP-Derived Swap Rates")
+        .properties(width=860, height=460, title="BP and Max-Min with Uniform LP-Derived Swap Rates")
     )
     chart.save(plot_path, ppi=300)
 
-    final = pl.concat(summaries).sort(["policy", "swap_rate_mode"])
+    final = pl.concat(summaries).sort("policy")
     print(final)
     print(f"plot={plot_path}")
 
