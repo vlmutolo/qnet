@@ -10,7 +10,22 @@ from qbp_sim import RunOptions, SimulationInputConfig, VirtualSwapPolicyConfig, 
 from qbp_sim.lp import linear
 
 
-def build_lp_configs() -> list[tuple[str, SimulationInputConfig]]:
+def _simulation_config(
+    lp_config: SimulationInputConfig,
+    *,
+    swap_rates: list[float],
+    policy_mode: str,
+) -> SimulationInputConfig:
+    return lp_config.model_copy(
+        update={
+            "swap_rates": swap_rates,
+            "capacity_headroom": 1.01,
+            "virtual_swap_policy": VirtualSwapPolicyConfig(mode=policy_mode),
+        }
+    )
+
+
+def build_lp_configs() -> list[tuple[str, str, str, SimulationInputConfig]]:
     num_nodes = 8
     generation_capacity = linear.create_cycle_adjacency_matrix(num_nodes, edge_weight=10.0)
     consumption_demand = linear.create_sparse_symmetric_adjacency_matrix(
@@ -35,28 +50,45 @@ def build_lp_configs() -> list[tuple[str, SimulationInputConfig]]:
     lp_config = linear.build_lp_solution_simulation_input_config(spec=spec, lp_result=lp_result)
     lp_swap_rates = np.asarray(lp_config.swap_rates, dtype=float)
     uniform_swap_rate = float(lp_swap_rates.sum() / num_nodes)
-
-    common_updates = {
-        "capacity_headroom": 1.01,
-        "virtual_swap_policy": VirtualSwapPolicyConfig(mode="bp"),
-    }
-    lp_node_totals_config = lp_config.model_copy(update=common_updates)
-    uniform_config = lp_config.model_copy(
-        update={
-            **common_updates,
-            "swap_rates": [uniform_swap_rate] * num_nodes,
-        }
-    )
+    uniform_swap_rates = [uniform_swap_rate] * num_nodes
 
     print(f"lp_node_swap_rates={lp_swap_rates.tolist()}")
     print(f"uniform_swap_rate={uniform_swap_rate:.6f}")
     return [
-        ("lp_node_totals", lp_node_totals_config),
-        ("uniform_lp_total_per_node", uniform_config),
+        (
+            "bp_lp_node_totals",
+            "bp",
+            "lp_node_totals",
+            _simulation_config(lp_config, swap_rates=lp_swap_rates.tolist(), policy_mode="bp"),
+        ),
+        (
+            "max_min_lp_node_totals",
+            "max_min",
+            "lp_node_totals",
+            _simulation_config(lp_config, swap_rates=lp_swap_rates.tolist(), policy_mode="max_min"),
+        ),
+        (
+            "bp_uniform_lp_total_per_node",
+            "bp",
+            "uniform_lp_total_per_node",
+            _simulation_config(lp_config, swap_rates=uniform_swap_rates, policy_mode="bp"),
+        ),
+        (
+            "max_min_uniform_lp_total_per_node",
+            "max_min",
+            "uniform_lp_total_per_node",
+            _simulation_config(lp_config, swap_rates=uniform_swap_rates, policy_mode="max_min"),
+        ),
     ]
 
 
-def service_ratio_frame(trace_path: Path, label: str, sample_every: int = 50) -> pl.DataFrame:
+def service_ratio_frame(
+    trace_path: Path,
+    run_label: str,
+    policy: str,
+    swap_rate_mode: str,
+    sample_every: int = 50,
+) -> pl.DataFrame:
     lf = pl.scan_parquet(trace_path)
     return (
         lf.select("event_index", "time", "event_type")
@@ -66,17 +98,28 @@ def service_ratio_frame(trace_path: Path, label: str, sample_every: int = 50) ->
         )
         .filter((pl.col("event_index") % sample_every) == 0)
         .with_columns(
-            swap_rate_mode=pl.lit(label),
+            run=pl.lit(run_label),
+            policy=pl.lit(policy),
+            swap_rate_mode=pl.lit(swap_rate_mode),
             service_ratio=pl.when(pl.col("demand_arrivals") > 0)
             .then(pl.col("services_completed") / pl.col("demand_arrivals"))
             .otherwise(0.0),
         )
-        .select("swap_rate_mode", "event_index", "time", "demand_arrivals", "services_completed", "service_ratio")
+        .select(
+            "run",
+            "policy",
+            "swap_rate_mode",
+            "event_index",
+            "time",
+            "demand_arrivals",
+            "services_completed",
+            "service_ratio",
+        )
         .collect()
     )
 
 
-def final_service_summary(trace_path: Path, label: str) -> pl.DataFrame:
+def final_service_summary(trace_path: Path, run_label: str, policy: str, swap_rate_mode: str) -> pl.DataFrame:
     lf = pl.scan_parquet(trace_path)
     return (
         lf.select("event_type")
@@ -85,12 +128,14 @@ def final_service_summary(trace_path: Path, label: str) -> pl.DataFrame:
             services_completed=(pl.col("event_type") == "physical_service").sum(),
         )
         .with_columns(
-            swap_rate_mode=pl.lit(label),
+            run=pl.lit(run_label),
+            policy=pl.lit(policy),
+            swap_rate_mode=pl.lit(swap_rate_mode),
             final_service_ratio=pl.when(pl.col("demand_arrivals") > 0)
             .then(pl.col("services_completed") / pl.col("demand_arrivals"))
             .otherwise(0.0),
         )
-        .select("swap_rate_mode", "demand_arrivals", "services_completed", "final_service_ratio")
+        .select("run", "policy", "swap_rate_mode", "demand_arrivals", "services_completed", "final_service_ratio")
         .collect()
     )
 
@@ -101,8 +146,8 @@ def main() -> None:
 
     frames: list[pl.DataFrame] = []
     summaries: list[pl.DataFrame] = []
-    for offset, (label, config) in enumerate(build_lp_configs()):
-        trace_path = output_dir / f"{label}.parquet"
+    for offset, (run_label, policy, swap_rate_mode, config) in enumerate(build_lp_configs()):
+        trace_path = output_dir / f"{run_label}.parquet"
         run_simulation(
             config,
             RunOptions(
@@ -115,8 +160,8 @@ def main() -> None:
                 progress=False,
             ),
         )
-        frames.append(service_ratio_frame(trace_path, label))
-        summaries.append(final_service_summary(trace_path, label))
+        frames.append(service_ratio_frame(trace_path, run_label, policy, swap_rate_mode))
+        summaries.append(final_service_summary(trace_path, run_label, policy, swap_rate_mode))
 
     df = pl.concat(frames)
     plot_path = output_dir / "uniform_lp_swap_rate_service_ratio.png"
@@ -126,8 +171,12 @@ def main() -> None:
         .encode(
             x=alt.X("time:Q", title="simulation time"),
             y=alt.Y("service_ratio:Q", title="service ratio", scale=alt.Scale(domain=[0, 1])),
-            color=alt.Color("swap_rate_mode:N", title="swap rate mode"),
+            color=alt.Color("policy:N", title="policy"),
+            strokeDash=alt.StrokeDash("swap_rate_mode:N", title="swap rate mode"),
+            detail="run:N",
             tooltip=[
+                "run:N",
+                "policy:N",
                 "swap_rate_mode:N",
                 "event_index:Q",
                 "time:Q",
@@ -136,11 +185,11 @@ def main() -> None:
                 "service_ratio:Q",
             ],
         )
-        .properties(width=860, height=460, title="LP Node Swap Rates vs Uniform LP Total per Node")
+        .properties(width=860, height=460, title="BP and Max-Min from LP-Derived Swap Rates")
     )
     chart.save(plot_path, ppi=300)
 
-    final = pl.concat(summaries).sort("swap_rate_mode")
+    final = pl.concat(summaries).sort(["policy", "swap_rate_mode"])
     print(final)
     print(f"plot={plot_path}")
 
