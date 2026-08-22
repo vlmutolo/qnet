@@ -52,6 +52,7 @@ class GillespieQBPEventProducer:
         seed: int | None = None,
     ) -> None:
         self.config = config
+        self.b = int(config.distillation_factor)
         self.n_nodes = config.swap_rates.shape[0]
         self.pair_u = pair_u
         self.pair_v = pair_v
@@ -128,6 +129,7 @@ class GillespieQBPEventProducer:
                 self.pair_v,
                 self.service_pair_rates,
                 self.active_virtual_service_rates,
+                self.b,
             )
         self.active_physical_service_total = _compute_active_physical_service_rates(
             state.q,
@@ -136,6 +138,7 @@ class GillespieQBPEventProducer:
             self.pair_v,
             self.service_pair_rates,
             self.active_physical_service_rates,
+            self.b,
         )
         self.active_virtual_swap_total = 0.0
         self.active_physical_swap_total = 0.0
@@ -153,6 +156,7 @@ class GillespieQBPEventProducer:
                 self.max_min_swap_best_output,
                 self.max_min_swap_best_idx,
                 self.max_min_swap_node_rates,
+                self.b,
             )
         else:
             for node in range(self.n_nodes):
@@ -167,7 +171,7 @@ class GillespieQBPEventProducer:
         old_rate = float(self.active_virtual_service_rates[idx])
         new_rate = 0.0
         if state.d[x, y] > 0:
-            if self._uses_max_min_policy() or state.d[x, y] >= state.alpha[x, y]:
+            if self._uses_max_min_policy() or state.d[x, y] >= self.b * state.alpha[x, y]:
                 new_rate = float(self.service_pair_rates[idx])
         self.active_virtual_service_rates[idx] = new_rate
         self.active_virtual_service_total += new_rate - old_rate
@@ -176,7 +180,7 @@ class GillespieQBPEventProducer:
         idx = int(self.pair_lookup[x, y])
         old_rate = float(self.active_physical_service_rates[idx])
         new_rate = 0.0
-        if state.h_r[x, y] > 0 and state.q[x, y] > 0:
+        if state.h_r[x, y] > 0 and state.q[x, y] >= self.b:
             new_rate = float(self.service_pair_rates[idx])
         self.active_physical_service_rates[idx] = new_rate
         self.active_physical_service_total += new_rate - old_rate
@@ -189,6 +193,7 @@ class GillespieQBPEventProducer:
             self.swap_node_starts,
             self.swap_y,
             self.swap_z,
+            self.b,
         )
         self.virtual_swap_best_weight[node] = best_weight
         self.virtual_swap_best_idx[node] = best_idx
@@ -209,7 +214,7 @@ class GillespieQBPEventProducer:
         i = int(self.swap_i[swap_idx])
         y = int(self.swap_y[swap_idx])
         z = int(self.swap_z[swap_idx])
-        return int(state.alpha[y, z] - state.alpha[i, y] - state.alpha[i, z])
+        return int(state.alpha[y, z] - self.b * (state.alpha[i, y] + state.alpha[i, z]))
 
     def _sample_limited_virtual_swap_candidates(self, node: int) -> NDArray[np.int64]:
         start = int(self.swap_node_starts[node])
@@ -271,6 +276,7 @@ class GillespieQBPEventProducer:
             self.swap_node_starts,
             self.swap_y,
             self.swap_z,
+            self.b,
         )
         self.physical_swap_best_deficit[node] = best_deficit
         self.physical_swap_best_idx[node] = best_idx
@@ -292,7 +298,12 @@ class GillespieQBPEventProducer:
         y = int(self.swap_y[swap_idx])
         z = int(self.swap_z[swap_idx])
         output_count = int(state.q[y, z])
-        if state.q[i, y] > output_count + 1 and state.q[i, z] > output_count + 1:
+        if (
+            state.q[i, y] >= self.b
+            and state.q[i, z] >= self.b
+            and state.q[i, y] > output_count + 1
+            and state.q[i, z] > output_count + 1
+        ):
             return output_count
         return -1
 
@@ -351,6 +362,7 @@ class GillespieQBPEventProducer:
             self.max_min_swap_best_output,
             self.max_min_swap_best_idx,
             self.max_min_swap_node_rates,
+            self.b,
         )
 
     def _update_virtual_swap_for_alpha_pair_change(self, state: QBPState, a: int, b: int, delta: int) -> None:
@@ -372,6 +384,7 @@ class GillespieQBPEventProducer:
             self.virtual_swap_best_idx,
             self.virtual_swap_node_rates,
             self.virtual_swap_rescan_nodes,
+            self.b,
         )
         self.active_virtual_swap_total += total_delta
         for idx in range(rescan_count):

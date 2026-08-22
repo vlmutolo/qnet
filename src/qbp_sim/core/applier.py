@@ -17,6 +17,9 @@ from qbp_sim.io.events import QBPEvent
 class QBPEventApplier:
     """Apply concrete events to mutable QBP state."""
 
+    def __init__(self, distillation_factor: int = 1) -> None:
+        self.b = int(distillation_factor)
+
     def apply(self, state: QBPState, event: QBPEvent) -> QBPEvent:
         expected_index = state.events_processed + 1
         if event.event_index != expected_index:
@@ -47,11 +50,12 @@ class QBPEventApplier:
                 state.h_r,
                 x,
                 y,
+                self.b,
             )
             state.virtual_service_requests += 1
             state.total_virtual_backlog_count -= 1
             state.total_service_deficit_count += 1
-            state.total_scarcity_count += 1
+            state.total_scarcity_count += self.b
         elif event.event_type == "service_request":
             x = _require(event.x, "x")
             y = _require(event.y, "y")
@@ -72,18 +76,19 @@ class QBPEventApplier:
                 i,
                 y,
                 z,
+                self.b,
             )
             state.virtual_swap_requests += 1
             state.total_swap_deficit_count += 1
-            state.total_scarcity_count += 2
+            state.total_scarcity_count += 2 * self.b
             if old_output_scarcity > 0:
                 state.total_scarcity_count -= 1
         elif event.event_type == "virtual_swap_idle":
             _require(event.i, "i")
         elif event.event_type == "physical_service":
-            _apply_physical_service(state.q, state.h_r, _require(event.x, "x"), _require(event.y, "y"))
+            _apply_physical_service(state.q, state.h_r, _require(event.x, "x"), _require(event.y, "y"), self.b)
             state.services_completed += 1
-            state.total_inventory_count -= 1
+            state.total_inventory_count -= self.b
             state.total_service_deficit_count -= 1
         elif event.event_type == "physical_swap":
             swap_idx = _require(event.swap_idx, "swap_idx")
@@ -94,9 +99,10 @@ class QBPEventApplier:
                 _require(event.i, "i"),
                 _require(event.y, "y"),
                 _require(event.z, "z"),
+                self.b,
             )
             state.swaps_completed += 1
-            state.total_inventory_count -= 1
+            state.total_inventory_count -= 2 * self.b - 1
             state.total_swap_deficit_count -= 1
         elif event.event_type == "max_min_swap":
             _apply_direct_physical_swap(
@@ -104,9 +110,10 @@ class QBPEventApplier:
                 _require(event.i, "i"),
                 _require(event.y, "y"),
                 _require(event.z, "z"),
+                self.b,
             )
             state.swaps_completed += 1
-            state.total_inventory_count -= 1
+            state.total_inventory_count -= 2 * self.b - 1
         elif event.event_type == "max_min_swap_idle":
             _require(event.i, "i")
         else:

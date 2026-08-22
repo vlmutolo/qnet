@@ -5,6 +5,7 @@ import json
 
 from qbp_sim.analysis import plot_snapshot_metric, summarize_snapshots
 from qbp_sim.cli.parser import (
+    _apply_distillation_factor_arg,
     _apply_instant_service_fulfillment_arg,
     _apply_virtual_swap_policy_args,
     _build_parser,
@@ -33,8 +34,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "run":
         input_config = load_simulation_config(args.config)
-        config = _apply_instant_service_fulfillment_arg(
-            _apply_virtual_swap_policy_args(input_config.to_runtime_config(), args),
+        config = _apply_distillation_factor_arg(
+            _apply_instant_service_fulfillment_arg(
+                _apply_virtual_swap_policy_args(input_config.to_runtime_config(), args),
+                args,
+            ),
             args,
         )
         sim = GillespieQBPSimulator(config=config, seed=args.seed)
@@ -87,8 +91,11 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
     if args.command == "example":
-        config = _apply_instant_service_fulfillment_arg(
-            _apply_virtual_swap_policy_args(build_four_node_counterexample(), args),
+        config = _apply_distillation_factor_arg(
+            _apply_instant_service_fulfillment_arg(
+                _apply_virtual_swap_policy_args(build_four_node_counterexample(), args),
+                args,
+            ),
             args,
         )
         sim = GillespieQBPSimulator(config=config, seed=args.seed)

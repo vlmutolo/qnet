@@ -15,13 +15,14 @@ def _compute_active_virtual_service_rates(
     pair_v: IntArray1D,
     service_pair_rates: Array1D,
     out: Array1D,
+    b: int,
 ) -> float:
     total = 0.0
     for idx in range(pair_u.shape[0]):
         x = pair_u[idx]
         y = pair_v[idx]
         rate = 0.0
-        if d[x, y] > 0 and d[x, y] >= alpha[x, y]:
+        if d[x, y] > 0 and d[x, y] >= b * alpha[x, y]:
             rate = service_pair_rates[idx]
         out[idx] = rate
         total += rate
@@ -56,13 +57,14 @@ def _compute_active_physical_service_rates(
     pair_v: IntArray1D,
     service_pair_rates: Array1D,
     out: Array1D,
+    b: int,
 ) -> float:
     total = 0.0
     for idx in range(pair_u.shape[0]):
         x = pair_u[idx]
         y = pair_v[idx]
         rate = 0.0
-        if h_r[x, y] > 0 and q[x, y] > 0:
+        if h_r[x, y] > 0 and q[x, y] >= b:
             rate = service_pair_rates[idx]
         out[idx] = rate
         total += rate
@@ -76,6 +78,7 @@ def _best_virtual_swap_for_node(
     swap_node_starts: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
+    b: int,
 ) -> tuple[int, int]:
     best_weight = 0
     best_idx = -1
@@ -84,7 +87,7 @@ def _best_virtual_swap_for_node(
     for idx in range(start, stop):
         y = swap_y[idx]
         z = swap_z[idx]
-        weight = alpha[y, z] - alpha[node, y] - alpha[node, z]
+        weight = alpha[y, z] - b * (alpha[node, y] + alpha[node, z])
         if weight > best_weight:
             best_weight = weight
             best_idx = idx
@@ -98,6 +101,7 @@ def _best_max_min_swap_for_node(
     swap_node_starts: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
+    b: int,
 ) -> tuple[int, int]:
     best_output = 9223372036854775807
     best_idx = -1
@@ -107,7 +111,12 @@ def _best_max_min_swap_for_node(
         y = swap_y[idx]
         z = swap_z[idx]
         output_count = q[y, z]
-        if q[node, y] > output_count + 1 and q[node, z] > output_count + 1:
+        if (
+            q[node, y] >= b
+            and q[node, z] >= b
+            and q[node, y] > output_count + 1
+            and q[node, z] > output_count + 1
+        ):
             if output_count < best_output or (output_count == best_output and (best_idx < 0 or idx < best_idx)):
                 best_output = output_count
                 best_idx = idx
@@ -126,10 +135,11 @@ def _compute_active_max_min_swap_rates(
     best_output: IntArray1D,
     best_idx: IntArray1D,
     node_rates: Array1D,
+    b: int,
 ) -> float:
     total = 0.0
     for node in range(swap_node_starts.shape[0] - 1):
-        output_count, idx = _best_max_min_swap_for_node(q, node, swap_node_starts, swap_y, swap_z)
+        output_count, idx = _best_max_min_swap_for_node(q, node, swap_node_starts, swap_y, swap_z, b)
         best_output[node] = output_count
         best_idx[node] = idx
         rate = 0.0
@@ -148,6 +158,7 @@ def _best_physical_swap_for_node(
     swap_node_starts: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
+    b: int,
 ) -> tuple[int, int]:
     best_deficit = 0
     best_idx = -1
@@ -158,7 +169,7 @@ def _best_physical_swap_for_node(
             continue
         y = swap_y[idx]
         z = swap_z[idx]
-        if q[node, y] <= 0 or q[node, z] <= 0:
+        if q[node, y] < b or q[node, z] < b:
             continue
         deficit = h_mu[idx]
         if deficit > best_deficit:
@@ -175,13 +186,14 @@ def _physical_swap_is_feasible(
     swap_i: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
+    b: int,
 ) -> bool:
     if swap_idx < 0 or h_mu[swap_idx] <= 0:
         return False
     i = swap_i[swap_idx]
     y = swap_y[swap_idx]
     z = swap_z[swap_idx]
-    return q[i, y] > 0 and q[i, z] > 0
+    return q[i, y] >= b and q[i, z] >= b
 
 
 @njit(cache=True)
@@ -194,6 +206,7 @@ def _best_physical_swap_using_edge(
     swap_i: IntArray1D,
     swap_y: IntArray1D,
     swap_z: IntArray1D,
+    b: int,
 ) -> int:
     best_deficit = 0
     best_idx = -1
@@ -203,14 +216,14 @@ def _best_physical_swap_using_edge(
             continue
 
         idx = swap_lookup[edge_x, edge_y, other]
-        if _physical_swap_is_feasible(q, h_mu, idx, swap_i, swap_y, swap_z):
+        if _physical_swap_is_feasible(q, h_mu, idx, swap_i, swap_y, swap_z, b):
             deficit = h_mu[idx]
             if deficit > best_deficit or (deficit == best_deficit and (best_idx < 0 or idx < best_idx)):
                 best_deficit = deficit
                 best_idx = idx
 
         idx = swap_lookup[edge_y, edge_x, other]
-        if _physical_swap_is_feasible(q, h_mu, idx, swap_i, swap_y, swap_z):
+        if _physical_swap_is_feasible(q, h_mu, idx, swap_i, swap_y, swap_z, b):
             deficit = h_mu[idx]
             if deficit > best_deficit or (deficit == best_deficit and (best_idx < 0 or idx < best_idx)):
                 best_deficit = deficit
@@ -231,6 +244,7 @@ def _update_virtual_swap_alpha_change_nonendpoints(
     best_idx: IntArray1D,
     node_rates: Array1D,
     rescan_nodes_out: IntArray1D,
+    distillation_factor: int,
 ) -> tuple[float, int]:
     total_delta = 0.0
     rescan_count = 0
@@ -242,7 +256,7 @@ def _update_virtual_swap_alpha_change_nonendpoints(
         if candidate_idx < 0:
             continue
         current_idx = best_idx[node]
-        new_weight = alpha[a, b] - alpha[node, a] - alpha[node, b]
+        new_weight = alpha[a, b] - distillation_factor * (alpha[node, a] + alpha[node, b])
         if current_idx == candidate_idx:
             if delta < 0:
                 rescan_nodes_out[rescan_count] = node
@@ -280,9 +294,9 @@ def _apply_pair_generation(q: IntMatrix, alpha: IntMatrix, x: int, y: int) -> No
 
 
 @njit(cache=True)
-def _apply_virtual_service(d: IntMatrix, alpha: IntMatrix, h_r: IntMatrix, x: int, y: int) -> None:
+def _apply_virtual_service(d: IntMatrix, alpha: IntMatrix, h_r: IntMatrix, x: int, y: int, b: int) -> None:
     backlog = d[x, y] - 1
-    scarcity = alpha[x, y] + 1
+    scarcity = alpha[x, y] + b
     pending = h_r[x, y] + 1
 
     d[x, y] = backlog
@@ -305,9 +319,9 @@ def _apply_service_request(d: IntMatrix, h_r: IntMatrix, x: int, y: int) -> None
 
 
 @njit(cache=True)
-def _apply_virtual_swap(alpha: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, y: int, z: int) -> None:
-    alpha_iy = alpha[i, y] + 1
-    alpha_iz = alpha[i, z] + 1
+def _apply_virtual_swap(alpha: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, y: int, z: int, b: int) -> None:
+    alpha_iy = alpha[i, y] + b
+    alpha_iz = alpha[i, z] + b
     alpha_yz = alpha[y, z] - 1
     if alpha_yz < 0:
         alpha_yz = 0
@@ -322,8 +336,8 @@ def _apply_virtual_swap(alpha: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: in
 
 
 @njit(cache=True)
-def _apply_physical_service(q: IntMatrix, h_r: IntMatrix, x: int, y: int) -> None:
-    inventory = q[x, y] - 1
+def _apply_physical_service(q: IntMatrix, h_r: IntMatrix, x: int, y: int, b: int) -> None:
+    inventory = q[x, y] - b
     pending = h_r[x, y] - 1
 
     q[x, y] = inventory
@@ -333,9 +347,9 @@ def _apply_physical_service(q: IntMatrix, h_r: IntMatrix, x: int, y: int) -> Non
 
 
 @njit(cache=True)
-def _apply_physical_swap(q: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, y: int, z: int) -> None:
-    q_iy = q[i, y] - 1
-    q_iz = q[i, z] - 1
+def _apply_physical_swap(q: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, y: int, z: int, b: int) -> None:
+    q_iy = q[i, y] - b
+    q_iz = q[i, z] - b
     q_yz = q[y, z] + 1
 
     q[i, y] = q_iy
@@ -348,9 +362,9 @@ def _apply_physical_swap(q: IntMatrix, h_mu: IntArray1D, swap_idx: int, i: int, 
 
 
 @njit(cache=True)
-def _apply_direct_physical_swap(q: IntMatrix, i: int, y: int, z: int) -> None:
-    q_iy = q[i, y] - 1
-    q_iz = q[i, z] - 1
+def _apply_direct_physical_swap(q: IntMatrix, i: int, y: int, z: int, b: int) -> None:
+    q_iy = q[i, y] - b
+    q_iz = q[i, z] - b
     q_yz = q[y, z] + 1
 
     q[i, y] = q_iy
