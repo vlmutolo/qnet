@@ -96,11 +96,13 @@ def build_simulation_input_config(
     generation_graph: np.ndarray,
     consumption_graph: np.ndarray,
     swap_rates: list[float] | np.ndarray,
+    distillation_factor: int = 1,
 ) -> SimulationInputConfig:
     return SimulationInputConfig(
         generation_rates=np.asarray(generation_graph, dtype=float).tolist(),
         consumption_rates=np.asarray(consumption_graph, dtype=float).tolist(),
         swap_rates=np.asarray(swap_rates, dtype=float).tolist(),
+        distillation_factor=distillation_factor,
     )
 
 
@@ -130,11 +132,12 @@ def build_lp_solution_simulation_input_config(
         generation_graph=spec.generate_matrix(lp_result),
         consumption_graph=spec.consume_matrix(lp_result),
         swap_rates=lp_node_swap_rates(spec, lp_result),
+        distillation_factor=spec.distillation_factor,
     )
 
 
 class LinearSpec:
-    def __init__(self, num_nodes: int):
+    def __init__(self, num_nodes: int, distillation_factor: int = 1):
         self._offsets = Offsets(num_nodes)
 
         self.a_ub: list[NDArray[np.float64]] = []
@@ -149,6 +152,9 @@ class LinearSpec:
             None for _ in range(self._offsets.total_num_vars)
         ]
         self.num_nodes = num_nodes
+        if distillation_factor < 1:
+            raise ValueError("distillation_factor must be a positive integer.")
+        self.distillation_factor = distillation_factor
         self._zero_out_degenerate_swaps()
 
     def solve(self, objective: str = "min_sum_generate"):
@@ -288,7 +294,9 @@ class LinearSpec:
                 lhs = self._var_generate((i, j)) + sum_term - self._var_arrive((i, j))
                 self._add_eq_constraint(lhs, 0)
 
-                # r-(i,j) = c(i,j) + sum_k (sigma(i,j,k) + sigma(j,i,k)) with k distinct from i,j
+                # B * (c(i,j) + sum_k (sigma(i,j,k) + sigma(j,i,k))) = r-(i,j), k distinct from i,j.
+                # Only the physical-consumption side (service + swap inputs) is scaled by the
+                # distillation factor; swap output production stays unscaled at one pair per swap.
                 sum_term = sp.coo_matrix((1, self._offsets.total_num_vars))
                 for k in range(self.num_nodes):
                     if k != i and k != j:
@@ -297,7 +305,7 @@ class LinearSpec:
                             + self._var_swap((i, j, k))
                             + self._var_swap((j, i, k))
                         )
-                lhs = self._var_consume((i, j)) + sum_term - self._var_depart((i, j))
+                lhs = self.distillation_factor * (self._var_consume((i, j)) + sum_term) - self._var_depart((i, j))
                 self._add_eq_constraint(lhs, 0)
 
     def _add_eq_constraint(self, lhs, rhs: float):
@@ -1386,6 +1394,7 @@ def single_run_topology(
     json_emit_full_matrices: bool = True,
     output_mode: str = "json",
     enforce_generation_capacity: bool = True,
+    distillation_factor: int = 1,
 ) -> SimulationInputConfig | None:
     valid_output_modes = {"json", "simulation-config", "json+simulation-config"}
     if output_mode not in valid_output_modes:
@@ -1433,9 +1442,10 @@ def single_run_topology(
         generation_graph=generation_graph,
         consumption_graph=consumption_graph,
         swap_rates=np.full(num_nodes, float(swap_rate), dtype=float),
+        distillation_factor=distillation_factor,
     )
 
-    spec = LinearSpec(num_nodes)
+    spec = LinearSpec(num_nodes, distillation_factor=distillation_factor)
     if enforce_generation_capacity:
         spec.add_generate_constraints(generation_graph)
     else:

@@ -76,7 +76,7 @@ class GillespieQBPSimulator(InstantFulfillmentMixin):
             seed=seed,
         )
         self.producer.initialize(self.state)
-        self.applier = QBPEventApplier()
+        self.applier = QBPEventApplier(distillation_factor=self.config.distillation_factor)
 
     def produce_next_event(self, until_time: float | None = None) -> QBPEvent | None:
         event, hit_limit = self.producer.produce(self.state, until_time=until_time)
@@ -359,6 +359,8 @@ class GillespieQBPSimulator(InstantFulfillmentMixin):
             raise ValueError("All rates must be non-negative.")
         if np.any(swap_rates < 0.0):
             raise ValueError("swap_rates must be non-negative.")
+        if int(config.distillation_factor) < 1:
+            raise ValueError("distillation_factor must be a positive integer.")
 
         generation_rates = generation_rates.copy()
         demand_rates = demand_rates.copy()
@@ -376,6 +378,7 @@ class GillespieQBPSimulator(InstantFulfillmentMixin):
             virtual_swap_policy=self._validate_virtual_swap_policy(config.virtual_swap_policy),
             instant_service_fulfillment=bool(config.instant_service_fulfillment),
             instant_swap_fulfillment=bool(config.instant_swap_fulfillment),
+            distillation_factor=int(config.distillation_factor),
         )
 
     def _validate_virtual_swap_policy(self, policy: VirtualSwapPolicy) -> VirtualSwapPolicy:

@@ -97,6 +97,49 @@ def test_linear_module_enforces_per_node_swap_caps() -> None:
     assert feasible.total_swap_undirected(feasible_result) > 0.0
 
 
+def test_linear_spec_scales_balance_constraint_by_distillation_factor() -> None:
+    module = linear_module
+
+    generation_graph = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float)
+    consumption_graph = np.array([[0.0, 3.0], [3.0, 0.0]], dtype=float)
+
+    spec = module.LinearSpec(2, distillation_factor=2)
+    spec.add_generate_zero_constraints(generation_graph)
+    spec.add_consume_constraints(consumption_graph)
+    result = spec.solve()
+
+    assert result.status == 0
+    assert np.isclose(spec.generate_matrix(result)[0, 1], 6.0)
+
+
+def test_linear_spec_rejects_non_positive_distillation_factor() -> None:
+    module = linear_module
+
+    try:
+        module.LinearSpec(2, distillation_factor=0)
+    except ValueError as exc:
+        assert "distillation_factor" in str(exc)
+    else:
+        raise AssertionError("Expected non-positive distillation_factor to fail construction.")
+
+
+def test_build_lp_solution_simulation_input_config_propagates_distillation_factor() -> None:
+    module = linear_module
+
+    generation_graph = module.create_chain_adjacency_matrix(2, edge_weight=10.0)
+    consumption_graph = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float)
+
+    spec = module.LinearSpec(2, distillation_factor=2)
+    spec.add_generate_zero_constraints(generation_graph)
+    spec.add_consume_constraints(consumption_graph)
+    spec.add_swap_capacity_constraints([0.0, 0.0])
+    result = spec.solve()
+    assert result.status == 0
+
+    config = module.build_lp_solution_simulation_input_config(spec=spec, lp_result=result)
+    assert config.distillation_factor == 2
+
+
 def test_lp_cycle_bp_service_ratio_converges_near_one(tmp_path) -> None:
     module = linear_module
 

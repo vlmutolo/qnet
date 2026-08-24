@@ -97,6 +97,14 @@ class SimulationInputConfig(BaseModel):
             "swaps instead of sampling physical swap hazards."
         ),
     )
+    distillation_factor: int = Field(
+        default=1,
+        description=(
+            "Fixed number of physical Bell pairs required per logical service or swap input. "
+            "1 recovers the undistilled model; each logical swap still produces exactly one "
+            "physical output pair regardless of this value."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_shapes(self) -> SimulationInputConfig:
@@ -120,6 +128,8 @@ class SimulationInputConfig(BaseModel):
             raise ValueError("swap_rates must be non-negative.")
         if self.capacity_headroom <= 0.0:
             raise ValueError("capacity_headroom must be positive.")
+        if self.distillation_factor < 1:
+            raise ValueError("distillation_factor must be a positive integer.")
         return self
 
     @property
@@ -152,6 +162,7 @@ class SimulationInputConfig(BaseModel):
             ),
             instant_service_fulfillment=self.instant_service_fulfillment,
             instant_swap_fulfillment=self.instant_swap_fulfillment,
+            distillation_factor=self.distillation_factor,
         )
 
     @classmethod

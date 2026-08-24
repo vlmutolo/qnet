@@ -43,6 +43,7 @@ class GillespieQBPConfig:
     virtual_swap_policy: VirtualSwapPolicy = field(default_factory=VirtualSwapPolicy)
     instant_service_fulfillment: bool = False
     instant_swap_fulfillment: bool = False
+    distillation_factor: int = 1
 
 
 INSTANT_FRONTIER_NONE = 0

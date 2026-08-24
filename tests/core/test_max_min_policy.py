@@ -296,3 +296,39 @@ def test_max_min_event_applies_as_concrete_replayable_swap() -> None:
     assert sim.state.q[1, 2] == 1
     assert sim.state.total_inventory == 5
     assert sim.state.total_swap_deficit == 0
+
+
+def test_max_min_swap_requires_distillation_factor_feasibility() -> None:
+    config = replace(_empty_config(3), distillation_factor=4)
+    config.swap_rates[0] = 1.0
+
+    # Balance heuristic alone (q_in > output + 1) would permit this swap: 3 > 0 + 1.
+    # Distillation feasibility (q_in >= b=4) blocks it.
+    infeasible_q = np.zeros((3, 3), dtype=np.int64)
+    infeasible_q[0, 1] = infeasible_q[1, 0] = 3
+    infeasible_q[0, 2] = infeasible_q[2, 0] = 3
+    infeasible_q[1, 2] = infeasible_q[2, 1] = 0
+
+    sim_infeasible = GillespieQBPSimulator(config, seed=111, initial_q=infeasible_q)
+    assert sim_infeasible.producer.max_min_swap_best_idx[0] == -1
+    assert sim_infeasible.producer.active_max_min_swap_total == 0.0
+
+    feasible_q = np.zeros((3, 3), dtype=np.int64)
+    feasible_q[0, 1] = feasible_q[1, 0] = 5
+    feasible_q[0, 2] = feasible_q[2, 0] = 5
+    feasible_q[1, 2] = feasible_q[2, 1] = 0
+
+    sim = GillespieQBPSimulator(config, seed=112, initial_q=feasible_q)
+    expected_idx = _swap_index(sim, 0, 1, 2)
+    assert sim.producer.max_min_swap_best_idx[0] == expected_idx
+
+    event = sim.produce_next_event()
+    assert event is not None
+    assert event.event_type == "max_min_swap"
+    sim.apply_event(event)
+
+    assert sim.state.q[0, 1] == 1  # 5 - b(4)
+    assert sim.state.q[0, 2] == 1
+    assert sim.state.q[1, 2] == 1  # 0 + 1
+    assert sim.swaps_completed == 1
+    _assert_state_invariants(sim)

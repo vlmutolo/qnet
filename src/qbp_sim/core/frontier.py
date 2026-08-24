@@ -27,7 +27,7 @@ class InstantFulfillmentMixin:
     def _instant_physical_service_event(self, x: int, y: int) -> QBPEvent | None:
         if not self.config.instant_service_fulfillment:
             return None
-        if self.state.h_r[x, y] <= 0 or self.state.q[x, y] <= 0:
+        if self.state.h_r[x, y] <= 0 or self.state.q[x, y] < self.config.distillation_factor:
             return None
         return QBPEvent(
             event_index=self.state.events_processed + 1,
@@ -50,6 +50,7 @@ class InstantFulfillmentMixin:
             self.swap_i,
             self.swap_y,
             self.swap_z,
+            self.config.distillation_factor,
         ):
             return None
         return QBPEvent(
@@ -78,6 +79,7 @@ class InstantFulfillmentMixin:
                 self.swap_i,
                 self.swap_y,
                 self.swap_z,
+                self.config.distillation_factor,
             )
         )
 

@@ -119,3 +119,35 @@ def test_simulation_input_config_rejects_asymmetric_rates() -> None:
         assert "symmetric" in str(exc)
     else:
         raise AssertionError("Expected asymmetric generation rates to fail validation.")
+
+
+def test_simulation_input_config_distillation_factor_defaults_and_propagates() -> None:
+    default_config = SimulationInputConfig(
+        generation_rates=[[0.0, 1.0], [1.0, 0.0]],
+        consumption_rates=[[0.0, 1.0], [1.0, 0.0]],
+        swap_rates=[1.0, 1.0],
+    )
+    assert default_config.distillation_factor == 1
+    assert default_config.to_runtime_config().distillation_factor == 1
+
+    scaled_config = SimulationInputConfig(
+        generation_rates=[[0.0, 1.0], [1.0, 0.0]],
+        consumption_rates=[[0.0, 1.0], [1.0, 0.0]],
+        swap_rates=[1.0, 1.0],
+        distillation_factor=3,
+    )
+    assert scaled_config.to_runtime_config().distillation_factor == 3
+
+
+def test_simulation_input_config_rejects_non_positive_distillation_factor() -> None:
+    try:
+        SimulationInputConfig(
+            generation_rates=[[0.0, 1.0], [1.0, 0.0]],
+            consumption_rates=[[0.0, 1.0], [1.0, 0.0]],
+            swap_rates=[1.0, 1.0],
+            distillation_factor=0,
+        )
+    except Exception as exc:
+        assert "distillation_factor" in str(exc)
+    else:
+        raise AssertionError("Expected non-positive distillation_factor to fail validation.")

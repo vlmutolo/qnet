@@ -113,6 +113,25 @@ def _apply_instant_service_fulfillment_arg(
     )
 
 
+def _add_distillation_factor_arg(command_parser: argparse.ArgumentParser) -> None:
+    command_parser.add_argument(
+        "--distillation-factor",
+        type=int,
+        default=None,
+        help=(
+            "Fixed number of physical Bell pairs required per logical service or swap input. "
+            "1 (the default) recovers the undistilled model."
+        ),
+    )
+
+
+def _apply_distillation_factor_arg(config: GillespieQBPConfig, args: argparse.Namespace) -> GillespieQBPConfig:
+    distillation_factor = getattr(args, "distillation_factor", None)
+    if distillation_factor is None:
+        return config
+    return replace(config, distillation_factor=distillation_factor)
+
+
 def _parse_limited_policy(value: str) -> tuple[int, int]:
     normalized = value.lower().replace("x", ":").replace(",", ":")
     parts = normalized.split(":")
@@ -220,6 +239,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_virtual_swap_policy_args(run_parser)
     _add_instant_service_fulfillment_arg(run_parser)
     _add_instant_swap_fulfillment_arg(run_parser)
+    _add_distillation_factor_arg(run_parser)
 
     example_parser = subparsers.add_parser(
         "example",
@@ -259,6 +279,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_virtual_swap_policy_args(example_parser)
     _add_instant_service_fulfillment_arg(example_parser)
     _add_instant_swap_fulfillment_arg(example_parser)
+    _add_distillation_factor_arg(example_parser)
 
     replay_parser = subparsers.add_parser(
         "replay",
