@@ -1394,6 +1394,7 @@ def single_run_topology(
     json_emit_full_matrices: bool = True,
     output_mode: str = "json",
     enforce_generation_capacity: bool = True,
+    distillation_factor: int = 1,
 ) -> SimulationInputConfig | None:
     valid_output_modes = {"json", "simulation-config", "json+simulation-config"}
     if output_mode not in valid_output_modes:
@@ -1441,9 +1442,10 @@ def single_run_topology(
         generation_graph=generation_graph,
         consumption_graph=consumption_graph,
         swap_rates=np.full(num_nodes, float(swap_rate), dtype=float),
+        distillation_factor=distillation_factor,
     )
 
-    spec = LinearSpec(num_nodes)
+    spec = LinearSpec(num_nodes, distillation_factor=distillation_factor)
     if enforce_generation_capacity:
         spec.add_generate_constraints(generation_graph)
     else:
